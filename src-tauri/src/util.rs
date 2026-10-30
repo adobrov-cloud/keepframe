@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 pub const RAW_EXT: &[&str] = &["raf", "fp2", "dng", "cr2", "cr3", "nef", "arw", "orf", "rw2"];
 pub const IMG_EXT: &[&str] = &["jpg", "jpeg", "hif", "heic", "png"];
 pub const VID_EXT: &[&str] = &["mov", "mp4", "avi", "mts"];
-pub const REVIEW_PREFIX: &str = "_на проверку";
+/// Review folders are named "<prefix> (<kind>)"; both UI languages are recognised.
+pub const REVIEW_PREFIXES: &[&str] = &["_на проверку", "_review"];
 pub const STATE_DIR: &str = ".photo-sorter";
 
 const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -49,7 +50,7 @@ pub fn walk_media(root: &Path, include_review: bool) -> Vec<PathBuf> {
             if n.starts_with('.') {
                 return false;
             }
-            include_review || !(e.file_type().is_dir() && n.starts_with(REVIEW_PREFIX))
+            include_review || !(e.file_type().is_dir() && is_review_name(&n))
         })
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_file() && is_media(e.path()))
@@ -57,8 +58,12 @@ pub fn walk_media(root: &Path, include_review: bool) -> Vec<PathBuf> {
         .collect()
 }
 
+pub fn is_review_name(n: &str) -> bool {
+    REVIEW_PREFIXES.iter().any(|p| n.starts_with(p))
+}
+
 pub fn in_review(p: &Path) -> bool {
-    p.components().any(|c| c.as_os_str().to_string_lossy().starts_with(REVIEW_PREFIX))
+    p.components().any(|c| is_review_name(&c.as_os_str().to_string_lossy()))
 }
 
 pub fn read_exif(p: &Path) -> Option<exif::Exif> {

@@ -39,23 +39,30 @@ fn settings_file(app: &AppHandle) -> PathBuf {
     d.join("settings.json")
 }
 
+/// Lets the webview load full-size originals from the library (for zoom).
+fn allow_assets(app: &AppHandle, lib: &str) {
+    let _ = app.asset_protocol_scope().allow_directory(lib, true);
+}
+
 #[tauri::command]
 fn get_settings(app: AppHandle) -> Settings {
-    if let Some(s) = fs::read(settings_file(&app)).ok().and_then(|b| serde_json::from_slice::<Settings>(&b).ok()) {
-        return s;
-    }
-    let pics = app.path().picture_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let fugi = pics.join("Fugi");
-    Settings { library: if fugi.is_dir() { fugi } else { pics }.to_string_lossy().into() }
+    let s = fs::read(settings_file(&app)).ok().and_then(|b| serde_json::from_slice::<Settings>(&b).ok()).unwrap_or_else(|| {
+        let pics = app.path().picture_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let fugi = pics.join("Fugi");
+        Settings { library: if fugi.is_dir() { fugi } else { pics }.to_string_lossy().into() }
+    });
+    allow_assets(&app, &s.library);
+    s
 }
 
 #[tauri::command]
 fn set_library(app: AppHandle, library: String) -> Result<Settings, String> {
     if !Path::new(&library).is_dir() {
-        return Err("Папка не найдена".into());
+        return Err("@err_no_folder".into());
     }
     let s = Settings { library };
     fs::write(settings_file(&app), serde_json::to_vec(&s).map_err(err)?).map_err(err)?;
+    allow_assets(&app, &s.library);
     Ok(s)
 }
 
@@ -94,6 +101,35 @@ fn list_cards() -> Vec<Card> {
         .collect()
 }
 
+#[derive(Serialize)]
+struct CardInfo {
+    total: u64,
+    free: u64,
+}
+
+#[tauri::command]
+fn card_info(card: String) -> Result<CardInfo, String> {
+    Ok(CardInfo { total: fs2::total_space(&card).map_err(err)?, free: fs2::available_space(&card).map_err(err)? })
+}
+
+#[tauri::command]
+async fn eject_card(card: String) -> Result<(), String> {
+    blocking(move || {
+        let out = if cfg!(target_os = "macos") {
+            std::process::Command::new("diskutil").args(["eject", &card]).output()
+        } else if cfg!(windows) {
+            let drive = card.trim_end_matches(['\\', '/']).to_string();
+            let ps = format!("(New-Object -comObject Shell.Application).Namespace(17).ParseName('{drive}').InvokeVerb('Eject')");
+            std::process::Command::new("powershell").args(["-NoProfile", "-Command", &ps]).output()
+        } else {
+            std::process::Command::new("umount").arg(&card).output()
+        }
+        .map_err(err)?;
+        if out.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&out.stderr).trim().to_string()) }
+    })
+    .await
+}
+
 // ---------- commands ----------
 
 #[tauri::command]
@@ -123,8 +159,13 @@ async fn thumb(app: AppHandle, path: String, size: u32) -> Result<String, String
 }
 
 #[tauri::command]
-async fn move_to_review(library: String, kind: String, paths: Vec<String>) -> Result<usize, String> {
-    blocking(move || review::move_to_review(&library, &kind, paths)).await
+async fn photo_info(path: String) -> Result<analyze::Info, String> {
+    blocking(move || Ok(analyze::info(Path::new(&path)))).await
+}
+
+#[tauri::command]
+async fn move_to_review(library: String, folder: String, paths: Vec<String>) -> Result<usize, String> {
+    blocking(move || review::move_to_review(&library, &folder, paths)).await
 }
 
 #[tauri::command]
@@ -148,8 +189,8 @@ fn undo_count(library: String) -> usize {
 }
 
 #[tauri::command]
-fn review_dir(library: String, kind: String) -> String {
-    review::review_dir(Path::new(&library), &kind).to_string_lossy().into()
+fn review_dir(library: String, folder: String) -> Result<String, String> {
+    Ok(review::review_dir(Path::new(&library), &folder)?.to_string_lossy().into())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -171,7 +212,10 @@ pub fn run() {
             undo_count,
             review_dir,
             list_review,
-            restore_from_review
+            restore_from_review,
+            card_info,
+            eject_card,
+            photo_info
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -204,13 +248,13 @@ mod tests {
         let recs = crate::analyze::run(h, &lib).unwrap();
         println!("analyze: {} recs in {:?}", recs.len(), t0.elapsed());
         let r = &recs[0];
-        println!("sample: {} iso={:?} f={:?} t={:?} fl={:?} ts={:?} orient={} vert={} sharp={} dhash={}",
-            r.name, r.iso, r.f, r.t, r.fl, r.ts, r.orient, r.vertical, r.sharp, r.dhash);
+        println!("sample: {} sharp_at={:?},{:?} iso={:?} f={:?} t={:?} fl={:?} ts={:?} orient={} vert={} sharp={} dhash={}",
+            r.name, r.sharp_u, r.sharp_v, r.iso, r.f, r.t, r.fl, r.ts, r.orient, r.vertical, r.sharp, r.dhash);
         let t0 = std::time::Instant::now();
         let th = crate::analyze::thumb(Path::new(&lib).join(".thumbcache").as_path(), Path::new(&r.path), 1400).unwrap();
         println!("thumb: {th} in {:?}", t0.elapsed());
 
-        let n = crate::review::move_to_review(&lib, "дубли", vec![r.path.clone()]).unwrap();
+        let n = crate::review::move_to_review(&lib, "_review (duplicates)", vec![r.path.clone()]).unwrap();
         println!("moved {n}");
         assert!(!Path::new(&r.path).exists());
         let v2 = crate::verify::run(h, &card, &lib).unwrap();
@@ -220,9 +264,9 @@ mod tests {
         assert_eq!(n, back);
         assert!(Path::new(&r.path).exists());
 
-        crate::review::move_to_review(&lib, "смазанные", vec![r.path.clone()]).unwrap();
+        crate::review::move_to_review(&lib, "_на проверку (смазанные)", vec![r.path.clone()]).unwrap();
         let items = crate::review::list_review(&lib);
-        println!("review list: {:?}", items.iter().map(|i| (&i.kind, &i.folder, &i.name, i.raws)).collect::<Vec<_>>());
+        println!("review list: {:?}", items.iter().map(|i| (&i.kind, &i.dir, &i.folder, &i.name, i.raws)).collect::<Vec<_>>());
         assert_eq!(items.len(), 1);
         let back = crate::review::restore(&lib, vec![items[0].path.clone()]).unwrap();
         println!("restored {back}");

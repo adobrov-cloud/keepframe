@@ -1,0 +1,23 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Photo Sorter",
+        "width": 1320,
+        "height": 880,
+        "minWidth": 960,
+        "minHeight": 620,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "transparent": true,
+        "windowEffects": {
+          "effects": [
+            "sidebar"
+          ],
+          "state": "followsWindowActiveState"
+        }
+      }
+    ]
+  }
+}

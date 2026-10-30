@@ -26,7 +26,8 @@
           "$APPCACHE/**"
         ]
       }
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,

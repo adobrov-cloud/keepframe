@@ -23,14 +23,17 @@ fn save(lib: &Path, j: &Journal) -> Result<(), String> {
     fs::write(journal_file(lib), serde_json::to_vec(j).map_err(err)?).map_err(err)
 }
 
-pub fn review_dir(lib: &Path, kind: &str) -> PathBuf {
-    lib.join(format!("{REVIEW_PREFIX} ({kind})"))
+pub fn review_dir(lib: &Path, folder: &str) -> Result<PathBuf, String> {
+    if !is_review_name(folder) || folder.contains(['/', '\\']) {
+        return Err(format!("not a review folder: {folder}"));
+    }
+    Ok(lib.join(folder))
 }
 
 /// Move the given photos — plus RAW/sidecar files with the same name in the sibling "<folder> RAW" — into the review folder.
-pub fn move_to_review(lib: &str, kind: &str, paths: Vec<String>) -> Result<usize, String> {
+pub fn move_to_review(lib: &str, folder: &str, paths: Vec<String>) -> Result<usize, String> {
     let lib = Path::new(lib);
-    let root = review_dir(lib, kind);
+    let root = review_dir(lib, folder)?;
     let mut batch: Batch = vec![];
     for p in paths {
         let src = PathBuf::from(&p);
@@ -96,6 +99,8 @@ pub fn undo_count(lib: &str) -> usize {
 pub struct ReviewItem {
     pub path: String,
     pub kind: String,
+    /// Name of the review folder itself, e.g. "_review (duplicates)".
+    pub dir: String,
     /// Library folder the photo came from.
     pub folder: String,
     pub name: String,
@@ -106,13 +111,17 @@ pub struct ReviewItem {
 }
 
 fn review_roots(lib: &Path) -> Vec<(String, PathBuf)> {
+    let kind_of = |n: &str| {
+        let p = REVIEW_PREFIXES.iter().find(|p| n.starts_with(*p))?;
+        Some(n[p.len()..].trim().trim_start_matches('(').trim_end_matches(')').to_string())
+    };
     let Ok(rd) = fs::read_dir(lib) else { return vec![] };
     let mut v: Vec<_> = rd
         .flatten()
         .filter(|e| e.path().is_dir())
         .filter_map(|e| {
             let n = e.file_name().to_string_lossy().to_string();
-            let kind = n.strip_prefix(REVIEW_PREFIX)?.trim().trim_start_matches('(').trim_end_matches(')').to_string();
+            let kind = kind_of(&n)?;
             Some((kind, e.path()))
         })
         .collect();
@@ -145,6 +154,7 @@ pub fn list_review(lib: &str) -> Vec<ReviewItem> {
             out.push(ReviewItem {
                 path: p.to_string_lossy().into(),
                 kind: kind.clone(),
+                dir: root.file_name().unwrap().to_string_lossy().into(),
                 folder: rel.parent().map(|r| r.to_string_lossy().to_string()).unwrap_or_default(),
                 name: p.file_name().unwrap().to_string_lossy().into(),
                 size: fs::metadata(&p).map(|m| m.len()).unwrap_or(0),

@@ -5,12 +5,73 @@ const opener = window.__TAURI__.opener;
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+
+function ls(k, def = null) {
+  try { return localStorage.getItem(k) ?? def; } catch { return def; }
+}
+function lsSet(k, v) {
+  try { localStorage.setItem(k, v); } catch {}
+}
+
+// ---------- i18n ----------
+
+const LANG = ls('lang') || (navigator.language.startsWith('ru') ? 'ru' : 'en');
+const L = STRINGS[LANG];
+function t(k, ...a) {
+  const v = L[k] ?? STRINGS.ru[k] ?? k;
+  return typeof v === 'function' ? v(...a) : v;
+}
+const IS_MAC = /Mac/.test(navigator.userAgent);
+document.documentElement.lang = LANG;
+document.documentElement.classList.toggle('mac', IS_MAC);
+const revealLabel = () => (IS_MAC ? t('reveal') : LANG === 'ru' ? 'Показать в папке' : 'Show in folder');
+
+const shots = n => t('shots', n), files = n => t('files', n);
+function gb(b) {
+  const [kb, mb, g] = L.units;
+  if (b >= 1e9) return (b / 1e9).toFixed(1).replace('.', L.decimal) + ' ' + g;
+  if (b >= 1e6) return Math.round(b / 1e6) + ' ' + mb;
+  return Math.round(b / 1e3) + ' ' + kb;
+}
+const fmtN = n => n.toLocaleString(LANG);
+
+// Review folders: "<prefix> (<kind>)", named in the current language; both languages are recognised.
+const KINDS = { dupes: ['дубли', 'duplicates'], blurry: ['смазанные', 'blurry'], rejects: ['отсев', 'rejects'] };
+const folderFor = k => (LANG === 'ru' ? `_на проверку (${KINDS[k][0]})` : `_review (${KINDS[k][1]})`);
+function kindLabel(raw) {
+  const k = Object.keys(KINDS).find(k => KINDS[k].includes(raw.toLowerCase()));
+  return k ? t('kind_' + k) : raw;
+}
+
+// ---------- icons ----------
+
+const ICON = {
+  import: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
+  mindful: '<path d="M7 7h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z"/><path d="M9 3h6"/><path d="m9.5 14 2 2 3.5-4"/>',
+  dupes: '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>',
+  blurry: '<circle cx="12" cy="12" r="3.2"/><path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/>',
+  review: '<rect x="3" y="4" width="18" height="5" rx="1.5"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9"/><path d="M10 13h4"/>',
+  stats: '<path d="M4 20V11"/><path d="M10 20V5"/><path d="M16 20v-6"/><path d="M21 20H3"/>',
+  verify: '<path d="M12 3 4.5 6v5.5c0 4.6 3.2 8.1 7.5 9.5 4.3-1.4 7.5-4.9 7.5-9.5V6z"/><path d="m9 12 2.2 2.2L15.5 10"/>',
+  settings: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+  card: '<path d="M7 3h8l4 4v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M10 7v3M13 7v3M16 8v2"/>',
+  eject: '<path d="m12 5 7 8H5z"/><path d="M5 18h14"/>',
+  check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  sparkle: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18"/>',
+};
+const icon = (n, s = 18) =>
+  `<svg class="ic" viewBox="0 0 24 24" width="${s}" height="${s}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICON[n]}</svg>`;
+
+// ---------- state ----------
 
 const state = {
-  view: 'import',
+  view: ls('onboarded') ? 'import' : 'welcome',
   lib: '',
   cards: [],
   card: null,          // selected card path
+  cardInfo: {},        // path -> {total, free}
   plan: null,          // import plan for state.card
   report: null,        // last import report
   newFolders: null,    // folders touched by the last import
@@ -19,24 +80,12 @@ const state = {
   scope: { dupes: '*', blurry: '*', stats: '*' },
   dupes: { groups: [], i: 0, keep: {} },
   blurry: { items: [], i: 0, dec: new Map(), kept: new Set() },
-  review: { items: null, kind: null, folder: '*', sel: new Set() },
+  mindful: null,
+  review: { items: null, dir: null, folder: '*', sel: new Set() },
   busy: false,
 };
 
-// ---------- helpers ----------
-
-function gb(b) {
-  if (b >= 1e9) return (b / 1e9).toFixed(1).replace('.', ',') + ' ГБ';
-  if (b >= 1e6) return Math.round(b / 1e6) + ' МБ';
-  return Math.round(b / 1e3) + ' КБ';
-}
-function plural(n, one, few, many) {
-  const m10 = n % 10, m100 = n % 100;
-  const w = m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20) ? few : many;
-  return `${n.toLocaleString('ru')} ${w}`;
-}
-const shots = n => plural(n, 'кадр', 'кадра', 'кадров');
-const files = n => plural(n, 'файл', 'файла', 'файлов');
+// ---------- thumbs ----------
 
 const thumbs = new Map();
 function thumb(path, size = 1400) {
@@ -44,24 +93,50 @@ function thumb(path, size = 1400) {
   if (!thumbs.has(k)) thumbs.set(k, invoke('thumb', { path, size }).then(convertFileSrc).catch(() => ''));
   return thumbs.get(k);
 }
-function fillThumbs(root, size) {
-  root.querySelectorAll('img[data-path]').forEach(img => {
-    thumb(img.dataset.path, size).then(src => { if (src) img.src = src; });
-  });
+function setThumb(img, size) {
+  thumb(img.dataset.path, size).then(src => { if (src && !img.dataset.full) img.src = src; });
 }
+function fillThumbs(root, size) {
+  root.querySelectorAll('img[data-path]').forEach(img => setThumb(img, size));
+}
+function lazyThumbs(root, size, scrollRoot = $('#main')) {
+  const io = new IntersectionObserver(es => es.forEach(e => {
+    if (!e.isIntersecting) return;
+    io.unobserve(e.target);
+    setThumb(e.target, size);
+  }), { root: scrollRoot, rootMargin: '400px' });
+  root.querySelectorAll('img[data-path]').forEach(img => io.observe(img));
+}
+
+// Full-size original for zooming; resolves with its natural width.
+function fullRes(img) {
+  if (img._full) return img._full;
+  img._full = new Promise(res => {
+    const src = convertFileSrc(img.dataset.path), im = new Image();
+    im.onload = () => {
+      if (img.isConnected) { img.dataset.full = '1'; img.src = src; img.dataset.nw = im.naturalWidth; }
+      res(im.naturalWidth);
+    };
+    im.onerror = () => res(0);
+    im.src = src;
+  });
+  return img._full;
+}
+
+// ---------- toast & errors ----------
 
 let toastTimer;
 function toast(html, ms = 6000) {
-  const t = $('#toast');
-  t.innerHTML = html;
-  t.hidden = false;
+  const el = $('#toast');
+  el.innerHTML = html;
+  el.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.hidden = true), ms);
-  return t;
+  toastTimer = setTimeout(() => (el.hidden = true), ms);
+  return el;
 }
-
+const msg = e => String(e).replace(/@(\w+)/g, (_, k) => t(k));
 function showError(e) {
-  toast(`<span style="color:var(--bad)">Ошибка:</span> ${esc(e)}`, 9000);
+  toast(`<span style="color:var(--bad)">${t('error')}:</span> ${esc(msg(e))}`, 9000);
 }
 
 // ---------- progress ----------
@@ -81,17 +156,17 @@ function stopProgress() {
 const speed = { t0: 0, b0: 0 };
 listen('progress', ({ payload: p }) => {
   if (!progressTask) return;
-  $('#ptext').textContent = p.label;
+  $('#ptext').textContent = p.label.startsWith('@') ? t('p_' + p.label.slice(1)) : p.label;
   if (!p.total) return;
   $('.pbar').classList.remove('indet');
   $('#pfill').style.width = (100 * p.done / p.total).toFixed(1) + '%';
   if (p.task === 'analyze') {
-    $('#pnum').textContent = `${p.done} / ${p.total}`;
+    $('#pnum').textContent = t('of', fmtN(p.done), fmtN(p.total));
   } else {
     const now = performance.now();
     if (!speed.t0 || p.done < speed.b0) Object.assign(speed, { t0: now, b0: p.done });
     const mbs = (p.done - speed.b0) / 1e6 / Math.max(0.5, (now - speed.t0) / 1000);
-    $('#pnum').textContent = `${gb(p.done)} из ${gb(p.total)}${mbs > 1 ? ` · ${Math.round(mbs)} МБ/с` : ''}`;
+    $('#pnum').textContent = t('of', gb(p.done), gb(p.total)) + (mbs > 1 ? ' · ' + t('mbs', Math.round(mbs)) : '');
   }
 });
 
@@ -110,6 +185,60 @@ async function task(name, text, fn) {
     stopProgress();
     render();
   }
+}
+
+// ---------- zoom ----------
+// Scroll zooms around the cursor; while zoomed, the visible area follows the cursor.
+// Boxes bound together (duplicates) share one zoom, so the same spot is compared in every shot.
+
+const Z = { s: 1, u: 0.5, v: 0.5 };
+function resetZoom() { Z.s = 1; }
+
+function bindZoom(boxes) {
+  const imgOf = b => b.querySelector('img.zimg');
+  const apply = () => boxes.forEach(b => {
+    const img = imgOf(b);
+    if (!img) return;
+    img.style.transformOrigin = `${Z.u * 100}% ${Z.v * 100}%`;
+    img.style.transform = Z.s > 1 ? `scale(${Z.s})` : '';
+    b.classList.toggle('zoomed', Z.s > 1);
+    if (Z.s > 1.3) fullRes(img).then(() => badge(b));
+    badge(b);
+  });
+  const badge = b => {
+    const el = b.querySelector('.zbadge'), img = imgOf(b);
+    if (!el || !img) return;
+    const nw = +img.dataset.nw;
+    el.textContent = Z.s > 1 ? (nw ? Math.round(100 * Z.s * img.offsetWidth / nw) + '%' : '×' + Z.s.toFixed(1)) : '';
+  };
+  const track = (b, e) => {
+    const img = imgOf(b), r = b.getBoundingClientRect();
+    if (!img?.offsetWidth) return;
+    Z.u = clamp((e.clientX - r.left - img.offsetLeft) / img.offsetWidth, 0, 1);
+    Z.v = clamp((e.clientY - r.top - img.offsetTop) / img.offsetHeight, 0, 1);
+  };
+  boxes.forEach(b => {
+    b.addEventListener('wheel', e => {
+      e.preventDefault();
+      track(b, e);
+      Z.s = clamp(Z.s * Math.exp(-e.deltaY * (e.ctrlKey ? 0.012 : 0.003)), 1, 12);
+      if (Z.s < 1.03) Z.s = 1;
+      apply();
+    }, { passive: false });
+    b.addEventListener('mousemove', e => { track(b, e); if (Z.s > 1) apply(); });
+  });
+  apply();
+  return apply;
+}
+// Jump to 1:1 pixels at (u, v), or back to fit.
+async function zoom1to1(box, apply, u, v) {
+  const img = box?.querySelector('img.zimg');
+  if (!img) return;
+  if (Z.s > 1) { Z.s = 1; return apply(); }
+  const nw = await fullRes(img);
+  if (u != null) { Z.u = u; Z.v = v; }
+  Z.s = nw ? clamp(nw / img.offsetWidth, 1, 12) : 4;
+  apply();
 }
 
 // ---------- cards ----------
@@ -131,12 +260,31 @@ async function pollCards() {
   } catch (_) {}
 }
 
-function cardChips() {
-  if (state.cards.length < 2) return '';
-  return `<div class="chips">${state.cards.map(c =>
-    `<div class="chip ${c.path === state.card ? 'on' : ''}" data-card="${esc(c.path)}">${esc(c.name)}</div>`).join('')}</div>`;
+function cardInfo(card) {
+  if (!card || card in state.cardInfo) return state.cardInfo[card];
+  state.cardInfo[card] = null;
+  invoke('card_info', { card }).then(i => {
+    state.cardInfo[card] = i;
+    if (['import', 'verify'].includes(state.view)) render();
+  }).catch(() => {});
 }
-function bindChips(main, after) {
+
+function cardBox() {
+  const c = state.cards.find(c => c.path === state.card);
+  if (!c) return '';
+  const info = cardInfo(c.path);
+  const used = info ? info.total - info.free : 0;
+  return `<div class="cardbox">
+    <div class="cb-ic">${icon('card', 26)}</div>
+    <div class="grow"><b>${esc(c.name)}</b>
+      <div class="mut small">${info ? t('card_used', gb(used), gb(info.total)) : esc(c.path)}</div>
+      ${info ? `<div class="cap"><i style="width:${(100 * used / info.total).toFixed(1)}%"></i></div>` : ''}</div>
+    ${state.cards.length > 1 ? `<div class="chips">${state.cards.map(x =>
+      `<div class="chip ${x.path === state.card ? 'on' : ''}" data-card="${esc(x.path)}">${esc(x.name)}</div>`).join('')}</div>` : ''}
+    <button class="btn" id="eject" ${state.busy ? 'disabled' : ''}>${icon('eject', 15)} ${t('eject')}</button>
+  </div>`;
+}
+function bindCard(main, after) {
   main.querySelectorAll('[data-card]').forEach(el => el.onclick = () => {
     state.card = el.dataset.card;
     state.plan = null;
@@ -144,76 +292,136 @@ function bindChips(main, after) {
     render();
     after?.();
   });
+  $('#eject', main)?.addEventListener('click', async () => {
+    const c = state.cards.find(c => c.path === state.card);
+    try {
+      await invoke('eject_card', { card: c.path });
+      toast(t('ejected', esc(c.name)));
+      pollCards();
+    } catch (e) { showError(e); }
+  });
 }
-const noCard = `<div class="empty"><div class="big">▭</div><h2>Вставьте карту памяти</h2>
-  Подключите карту через картридер — приложение найдёт её само.</div>`;
+const noCard = () => `<div class="empty"><div class="big">${icon('card', 54)}</div><h2>${t('no_card')}</h2>${t('no_card_sub')}</div>`;
+
+// ---------- welcome ----------
+
+function viewWelcome(main) {
+  document.body.classList.add('welcome');
+  main.innerHTML = `<div class="welcome-box">
+    <div class="logo">${icon('sparkle', 34)}</div>
+    <h1>Photo Sorter</h1>
+    <p class="sub">${t('welcome_tag')}</p>
+    <div class="panel"><h3>${t('welcome_lang')}</h3>
+      <div class="seg">${['ru', 'en'].map(l => `<button data-lang="${l}" class="${l === LANG ? 'on' : ''}">${l === 'ru' ? 'Русский' : 'English'}</button>`).join('')}</div></div>
+    <div class="panel"><h3>${t('welcome_lib')}</h3><div class="mut small" style="margin-bottom:10px">${t('welcome_lib_sub')}</div>
+      <div class="pathrow">${icon('folder', 16)}<span>${esc(state.lib)}</span><button class="btn" id="pick">${t('change')}</button></div></div>
+    <button class="btn primary big" id="start">${t('welcome_go')}</button>
+  </div>`;
+  bindLang(main);
+  $('#pick', main).onclick = pickLibrary;
+  $('#start', main).onclick = () => {
+    lsSet('onboarded', '1');
+    document.body.classList.remove('welcome');
+    go('import');
+  };
+}
+function bindLang(main) {
+  main.querySelectorAll('[data-lang]').forEach(b => (b.onclick = () => {
+    if (b.dataset.lang === LANG) return;
+    lsSet('lang', b.dataset.lang);
+    location.reload();
+  }));
+}
+async function pickLibrary() {
+  const dir = await dialog.open({ directory: true, defaultPath: state.lib });
+  if (!dir) return;
+  try {
+    const s = await invoke('set_library', { library: dir });
+    setLib(s.library);
+    render();
+  } catch (e) { showError(e); }
+}
 
 // ---------- import ----------
 
 function scan() {
   const card = state.card;
-  return task('scan', 'Читаю карту…', async () => {
+  return task('scan', t('task_scan'), async () => {
     state.plan = await invoke('scan_import', { card, library: state.lib });
   });
 }
 
 function runImport() {
   const items = state.plan.items;
-  return task('import', 'Копирую…', async () => {
+  return task('import', t('task_import'), async () => {
     const rep = await invoke('run_import', { items, library: state.lib });
     state.report = rep;
     state.newFolders = rep.folders;
     state.recs = null;
+    delete state.cardInfo[state.card];
     state.plan = await invoke('scan_import', { card: state.card, library: state.lib });
   }).then(() => {
     if (mindfulOn() && state.report?.photos.length) startMindful(state.report.photos);
   });
 }
 
+const isJpg = n => /\.jpe?g$/i.test(n);
+function fmtDay(d) {
+  const dt = new Date(d + 'T12:00:00');
+  return isNaN(dt) ? d : dt.toLocaleDateString(LANG, { weekday: 'short', day: 'numeric', month: 'long' });
+}
+
 function viewImport(main) {
   const name = state.cards.find(c => c.path === state.card)?.name;
-  let html = `<h1>Импорт с карты</h1><p class="sub">Новые кадры копируются в папки по дням съёмки, RAW — в соседнюю папку «… RAW». Каждая копия сверяется по контрольной сумме.</p>`;
-  if (!state.card) { main.innerHTML = html + noCard; return; }
-  html += cardChips();
+  let html = `<h1>${t('import_title')}</h1><p class="sub">${t('import_sub')}</p>`;
+  if (!state.card) { main.innerHTML = html + noCard(); return; }
+  html += cardBox();
   const p = state.plan;
   if (state.report) {
     const r = state.report;
     html += `<div class="panel ${r.failed.length ? 'badbox' : 'okbox'}">
-      <h3>${r.failed.length ? 'Скопировано с ошибками' : 'Импорт завершён'}</h3>
-      <div>Скопировано ${files(r.copied)} (${gb(r.bytes)})${r.skipped ? `, пропущено ${r.skipped} — уже были` : ''}.</div>
-      ${r.failed.length ? `<div class="scroll small" style="margin-top:8px">${r.failed.map(esc).join('<br>')}</div>` : ''}
+      <h3>${r.failed.length ? t('rep_errors') : t('rep_done')}</h3>
+      <div>${t('rep_line', files(r.copied), gb(r.bytes), r.skipped)}</div>
+      ${r.failed.length ? `<div class="scroll small" style="margin-top:8px">${r.failed.map(f => esc(msg(f))).join('<br>')}</div>` : ''}
       <div class="row" style="margin-top:12px">
-        ${r.photos.length ? `<button class="btn" id="goMindful">Пролистать ${shots(r.photos.length)} — оставить / в отсев</button>` : ''}
-        <button class="btn" id="goDupes">Найти дубли в новых папках</button>
-        <button class="btn" id="goVerify">Проверить карту перед форматированием</button>
+        ${r.photos.length ? `<button class="btn" id="goMindful">${t('go_mindful', shots(r.photos.length))}</button>` : ''}
+        <button class="btn" id="goDupes">${t('go_dupes')}</button>
+        <button class="btn" id="goVerify">${t('go_verify')}</button>
       </div></div>`;
   }
-  if (!p) { main.innerHTML = html + `<div class="mut"><span class="spin"></span> Читаю «${esc(name)}»…</div>`; bindImport(main); return; }
+  if (!p) { main.innerHTML = html + `<div class="mut"><span class="spin"></span> ${t('reading', esc(name))}</div>`; bindImport(main); return; }
 
   html += `<div class="kpis">
-    <div class="kpi"><b>${p.total.toLocaleString('ru')}</b><span>файлов на карте «${esc(name)}»</span></div>
-    <div class="kpi"><b>${p.already.toLocaleString('ru')}</b><span>уже в библиотеке</span></div>
-    <div class="kpi ${p.items.length ? '' : 'good'}"><b>${p.items.length.toLocaleString('ru')}</b><span>новых · ${gb(p.bytes)}</span></div>
+    <div class="kpi"><b>${fmtN(p.total)}</b><span>${t('k_on_card', esc(name))}</span></div>
+    <div class="kpi"><b>${fmtN(p.already)}</b><span>${t('k_already')}</span></div>
+    <div class="kpi ${p.items.length ? 'accent' : 'good'}"><b>${fmtN(p.items.length)}</b><span>${t('k_new', gb(p.bytes))}</span></div>
   </div>`;
   if (p.items.length) {
-    html += `<div class="panel"><table>
-      <tr><th>Папка</th><th>Дата</th><th class="n">Фото</th><th class="n">RAW</th><th class="n">Видео</th><th class="n">Размер</th></tr>
-      ${p.days.map(d => `<tr><td>${esc(d.folder)}</td><td class="mut">${d.date.split('-').reverse().join('.')}</td>
-        <td class="n">${d.photos || ''}</td><td class="n">${d.raws || ''}</td><td class="n">${d.videos || ''}</td><td class="n">${gb(d.bytes)}</td></tr>`).join('')}
-    </table></div>
+    const byDay = {};
+    p.items.forEach(it => { if (it.kind === 'photo' && isJpg(it.name)) (byDay[it.dest_dir] ||= []).push(it); });
+    html += `<div class="days">${p.days.map(d => {
+      const ph = byDay[d.folder] || [], show = ph.slice(0, 14);
+      return `<div class="day">
+        <div class="day-h"><b>${esc(d.folder)}</b><span class="mut">${fmtDay(d.date)}</span><span class="grow"></span>
+          <span class="mut small">${t('day_counts', d.photos, d.raws, d.videos)} · ${gb(d.bytes)}</span></div>
+        ${show.length ? `<div class="filmrow">${show.map(it => `<img data-path="${esc(it.src)}" alt="">`).join('')}
+          ${ph.length > show.length ? `<span class="morebox">${t('more', ph.length - show.length)}</span>` : ''}</div>` : ''}
+      </div>`;
+    }).join('')}</div>
     <label class="mindful"><input type="checkbox" id="mindful" ${mindfulOn() ? 'checked' : ''}>
-      <span><b>Осознанный импорт</b><br><span class="mut small">После копирования сразу пролистать новые кадры: → оставить, ← в «_на проверку (отсев)» вместе с RAW.</span></span></label>
-    <div class="row"><button class="btn primary" id="doImport" ${state.busy ? 'disabled' : ''}>Импортировать ${files(p.items.length)} · ${gb(p.bytes)}</button>
-    <button class="btn" id="rescan" ${state.busy ? 'disabled' : ''}>Пересканировать</button></div>`;
+      <span><b>${t('mindful')}</b><br><span class="mut small">${t('mindful_sub')}</span></span></label>
+    <div class="row"><button class="btn primary" id="doImport" ${state.busy ? 'disabled' : ''}>${t('do_import', files(p.items.length), gb(p.bytes))}</button>
+    <button class="btn" id="rescan" ${state.busy ? 'disabled' : ''}>${t('rescan')}</button></div>`;
   } else if (!state.report) {
-    html += `<div class="panel okbox"><h3>Всё с этой карты уже в библиотеке</h3>
-      <div class="row" style="margin-top:8px"><button class="btn" id="goVerify">Проверить по контрольным суммам перед форматированием</button></div></div>`;
+    html += `<div class="panel okbox"><h3>${t('all_in_lib')}</h3>
+      <div class="row" style="margin-top:8px"><button class="btn" id="goVerify">${t('verify_sums')}</button></div></div>`;
   }
   main.innerHTML = html;
+  lazyThumbs(main, 320);
   bindImport(main);
 }
 function bindImport(main) {
-  bindChips(main, scan);
+  bindCard(main, scan);
   $('#doImport', main)?.addEventListener('click', runImport);
   $('#mindful', main)?.addEventListener('change', e => setMindful(e.target.checked));
   $('#goMindful', main)?.addEventListener('click', () => {
@@ -228,32 +436,32 @@ function bindImport(main) {
 // ---------- verify ----------
 
 function runVerify() {
-  return task('verify', 'Считаю контрольные суммы…', async () => {
+  return task('verify', t('task_verify'), async () => {
     state.verify = await invoke('verify_card', { card: state.card, library: state.lib });
   });
 }
 
 function viewVerify(main) {
-  let html = `<h1>Проверка карты</h1><p class="sub">Сравнивает SHA-256 каждого файла на карте со всеми файлами библиотеки — по содержимому, не по именам. Первый раз библиотека читается целиком (несколько минут), дальше — только новые файлы.</p>`;
-  if (!state.card) { main.innerHTML = html + noCard; return; }
-  html += cardChips();
+  let html = `<h1>${t('verify_title')}</h1><p class="sub">${t('verify_sub')}</p>`;
+  if (!state.card) { main.innerHTML = html + noCard(); return; }
+  html += cardBox();
   const v = state.verify;
   if (v) {
     if (!v.missing.length) {
-      html += `<div class="panel okbox"><h3>✓ Можно форматировать</h3>
-        Все ${files(v.card_files)} с карты (${gb(v.card_bytes)}) есть в библиотеке байт в байт.
-        ${v.only_in_review ? `<div class="panel warnbox" style="margin:12px 0 0"><b>${files(v.only_in_review)}</b> сейчас лежат только в папках «_на проверку». После форматирования удаление этих папок будет окончательным — сначала просмотрите их.</div>` : ''}
+      html += `<div class="panel okbox"><h3>${t('v_ok')}</h3>
+        ${t('v_ok_line', files(v.card_files), gb(v.card_bytes))}
+        ${v.only_in_review ? `<div class="panel warnbox" style="margin:12px 0 0">${t('v_review', files(v.only_in_review))}</div>` : ''}
       </div>`;
     } else {
-      html += `<div class="panel badbox"><h3>Не форматируйте: ${files(v.missing.length)} нет в библиотеке</h3>
+      html += `<div class="panel badbox"><h3>${t('v_bad', files(v.missing.length))}</h3>
         <div class="scroll small">${v.missing.map(m => `${esc(m.path)} <span class="mut">${gb(m.size)}</span>`).join('<br>')}</div>
-        <div class="row" style="margin-top:10px"><button class="btn" id="goImport">Перейти к импорту</button></div></div>`;
+        <div class="row" style="margin-top:10px"><button class="btn" id="goImport">${t('go_import')}</button></div></div>`;
     }
-    html += `<div class="mut small">Список контрольных сумм: <button class="link" id="revealSums">${esc(v.checksum_file)}</button></div>`;
+    html += `<div class="mut small">${t('v_sums')} <button class="link" id="revealSums">${esc(v.checksum_file)}</button></div>`;
   }
-  html += `<div class="row" style="margin-top:16px"><button class="btn ${v ? '' : 'primary'}" id="doVerify" ${state.busy ? 'disabled' : ''}>${v ? 'Проверить ещё раз' : 'Проверить карту'}</button></div>`;
+  html += `<div class="row" style="margin-top:16px"><button class="btn ${v ? '' : 'primary'}" id="doVerify" ${state.busy ? 'disabled' : ''}>${v ? t('v_again') : t('v_run')}</button></div>`;
   main.innerHTML = html;
-  bindChips(main);
+  bindCard(main);
   $('#doVerify', main)?.addEventListener('click', runVerify);
   $('#goImport', main)?.addEventListener('click', () => go('import'));
   $('#revealSums', main)?.addEventListener('click', () => opener.revealItemInDir(v.checksum_file));
@@ -263,13 +471,13 @@ function viewVerify(main) {
 
 function ensureRecs() {
   if (state.recs) return Promise.resolve();
-  return task('analyze', 'Анализирую библиотеку…', async () => {
+  return task('analyze', t('task_analyze'), async () => {
     state.recs = await invoke('analyze', { library: state.lib });
   });
 }
 
 function folders() {
-  return [...new Set((state.recs || []).map(r => r.folder))].sort((a, b) => a.localeCompare(b, 'ru', { numeric: true }));
+  return [...new Set((state.recs || []).map(r => r.folder))].sort((a, b) => a.localeCompare(b, LANG, { numeric: true }));
 }
 function scoped(scope) {
   const recs = state.recs || [];
@@ -278,16 +486,16 @@ function scoped(scope) {
   return recs.filter(r => r.folder === scope);
 }
 function scopeSelect(id, cur) {
-  const opts = [['*', 'Вся библиотека']];
-  if (state.newFolders?.length) opts.push(['new', 'Новые после импорта']);
+  const opts = [['*', t('scope_all')]];
+  if (state.newFolders?.length) opts.push(['new', t('scope_new')]);
   folders().forEach(f => opts.push([f, f]));
-  return `<select id="${id}">${opts.map(([v, t]) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
+  return `<select id="${id}">${opts.map(([v, l]) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
 }
 function needAnalysis(main, title, sub) {
   main.innerHTML = `<h1>${title}</h1><p class="sub">${sub}</p>
-    <div class="empty"><div class="big">◎</div><h2>Нужно проанализировать библиотеку</h2>
-    <p>Первый раз это займёт пару минут, дальше — секунды: результаты кэшируются.</p>
-    <button class="btn primary" id="doAnalyze" ${state.busy ? 'disabled' : ''}>Анализировать</button></div>`;
+    <div class="empty"><div class="big">${icon('blurry', 54)}</div><h2>${t('need_analysis')}</h2>
+    <p>${t('need_analysis_sub')}</p>
+    <button class="btn primary" id="doAnalyze" ${state.busy ? 'disabled' : ''}>${t('analyze')}</button></div>`;
   $('#doAnalyze', main).onclick = () => ensureRecs();
 }
 
@@ -295,6 +503,10 @@ function hamming(a, b) {
   let x = BigInt('0x' + a) ^ BigInt('0x' + b), c = 0;
   while (x) { c += Number(x & 1n); x >>= 1n; }
   return c;
+}
+
+function progressBar(i, n) {
+  return `<div class="pbar thin"><i style="width:${(100 * Math.min(i, n) / Math.max(1, n)).toFixed(1)}%"></i></div>`;
 }
 
 // ---------- dupes ----------
@@ -330,8 +542,9 @@ function dupesRejected() {
   return state.dupes.groups.flatMap(g => g.items.filter(r => !dupesKeep(g).includes(r.path)).map(r => r.path));
 }
 
+let dupesApply = null;
 function viewDupes(main) {
-  const title = 'Дубли', sub = 'Серии почти одинаковых кадров, снятых подряд. В каждой серии самый резкий отмечен зелёным — поправьте выбор, остальное уйдёт в «_на проверку (дубли)».';
+  const title = t('dupes_title'), sub = t('dupes_sub');
   if (!state.recs) return needAnalysis(main, title, sub);
   const D = state.dupes;
   if (!D.groups.length || D.scope !== state.scope.dupes) {
@@ -342,7 +555,7 @@ function viewDupes(main) {
   }
   if (!D.groups.length) {
     main.innerHTML = `<h1>${title}</h1><div class="row" style="margin-bottom:20px">${scopeSelect('scope', state.scope.dupes)}</div>
-      <div class="empty"><div class="big">✓</div><h2>Серий-дублей не найдено</h2></div>`;
+      <div class="empty"><div class="big">${icon('check', 54)}</div><h2>${t('no_dupes')}</h2></div>`;
     $('#scope', main).onchange = e => { state.scope.dupes = e.target.value; render(); };
     return;
   }
@@ -354,35 +567,51 @@ function viewDupes(main) {
   main.innerHTML = `
     <div class="rv-head">
       ${scopeSelect('scope', state.scope.dupes)}
-      <b>Серия ${D.i + 1} из ${D.groups.length}</b>
+      <b>${t('series_n', D.i + 1, D.groups.length)}</b>
       <span class="mut">${esc(g.folder)} · ${shots(g.items.length)}</span>
-      ${keep.length ? '' : '<span style="color:var(--bad);font-weight:600">вся серия уйдёт в проверку</span>'}
+      ${keep.length ? '' : `<span class="warn-txt">${t('all_out')}</span>`}
       <span class="grow"></span>
       <button class="btn" id="prev">←</button><button class="btn" id="next">→</button>
-      <button class="btn primary" id="apply" ${rej && !state.busy ? '' : 'disabled'}>Убрать ${shots(rej)} в проверку</button>
+      <button class="btn primary" id="apply" ${rej && !state.busy ? '' : 'disabled'}>${t('move_n', shots(rej))}</button>
     </div>
+    ${progressBar(D.i + 1, D.groups.length)}
     <div class="rv-stage">${g.items.map((r, j) => `
-      <div class="shot ${keep.includes(r.path) ? 'keep' : ''}" data-j="${j}">
-        <img data-path="${esc(r.path)}" alt="">
-        <span class="tag">${j + 1} ${keep.includes(r.path) ? '✓ оставить' : '→ в проверку'}</span>
+      <div class="shot zoom ${keep.includes(r.path) ? 'keep' : ''}" data-j="${j}">
+        <img class="zimg" data-path="${esc(r.path)}" alt="">
+        <span class="tag">${j + 1} ${keep.includes(r.path) ? t('keep_tag') : t('out_tag')}</span>
+        <span class="zbadge"></span>
         <span class="fname">${esc(r.name)}</span>
       </div>`).join('')}</div>
-    <div class="rv-foot"><span><kbd>клик</kbd> или <kbd>1</kbd>–<kbd>9</kbd> оставить / убрать</span>
-      <span><kbd>←</kbd> <kbd>→</kbd> <kbd>пробел</kbd> листать</span><span><kbd>Z</kbd> удерживать — на весь экран</span></div>`;
-  fillThumbs(main, 1400);
+    <div class="strip" id="strip">${D.groups.map((x, i) => {
+      const edited = x.key in D.keep, none = !dupesKeep(x).length;
+      return `<div class="sitem ${i === D.i ? 'cur' : ''} ${none ? 'none' : ''}" data-i="${i}">
+        <img data-path="${esc(x.best)}" alt=""><span>${x.items.length}</span>${edited ? '<i></i>' : ''}</div>`;
+    }).join('')}</div>
+    <div class="rv-foot"><span><kbd>${t('h_click')}</kbd> ${t('h_or')} <kbd>1</kbd>–<kbd>9</kbd> ${t('h_toggle')}</span>
+      <span><kbd>←</kbd> <kbd>→</kbd> <kbd>${t('h_space')}</kbd> ${t('h_page')}</span>
+      <span><kbd>${t('h_wheel')}</kbd> ${t('h_zoom_sync')}</span><span><kbd>Z</kbd> ${t('h_hold')}</span></div>`;
+  const stage = $('.rv-stage', main), strip = $('#strip', main);
+  fillThumbs(stage, 1400);
   D.groups[D.i + 1]?.items.forEach(r => thumb(r.path, 1400));
+  lazyThumbs(strip, 200, strip);
+  strip.querySelector('.cur')?.scrollIntoView({ inline: 'center', block: 'nearest' });
+  strip.querySelectorAll('.sitem').forEach(el => (el.onclick = () => { D.i = +el.dataset.i; resetZoom(); render(); }));
+  dupesApply = bindZoom([...stage.querySelectorAll('.zoom')]);
   $('#scope', main).onchange = e => { state.scope.dupes = e.target.value; render(); };
   $('#prev', main).onclick = () => stepDupes(-1);
   $('#next', main).onclick = () => stepDupes(1);
-  $('#apply', main).onclick = () => applyMoves('дубли', dupesRejected());
-  main.querySelectorAll('.shot').forEach(el => {
+  $('#apply', main).onclick = () => applyMoves('dupes', dupesRejected());
+  stage.querySelectorAll('.shot').forEach(el => {
     el.onclick = () => toggleDupe(+el.dataset.j);
     el.onmouseenter = () => (hoverPath = g.items[+el.dataset.j].path);
   });
 }
 function stepDupes(d) {
   const D = state.dupes;
-  D.i = Math.max(0, Math.min(D.groups.length - 1, D.i + d));
+  const i = clamp(D.i + d, 0, D.groups.length - 1);
+  if (i === D.i) return;
+  D.i = i;
+  resetZoom();
   render();
 }
 function toggleDupe(j) {
@@ -413,15 +642,14 @@ function findBlurry(recs) {
 // Frames the user swiped right on stay hidden from later passes.
 const keptKey = () => 'blurry-kept:' + state.lib;
 function loadKept() {
-  try { return new Set(JSON.parse(localStorage.getItem(keptKey()) || '[]')); } catch { return new Set(); }
+  try { return new Set(JSON.parse(ls(keptKey(), '[]'))); } catch { return new Set(); }
 }
 function saveKept(set) {
-  try { localStorage.setItem(keptKey(), JSON.stringify([...set])); } catch {}
+  lsSet(keptKey(), JSON.stringify([...set]));
 }
 
-
 function viewBlurry(main) {
-  const title = 'Смазанные', sub = 'Кадры, которые заметно мягче остальных в своей папке. Иногда это просто размытый фон — решайте глазами.';
+  const title = t('blurry_title'), sub = t('blurry_sub');
   if (!state.recs) return needAnalysis(main, title, sub);
   const B = state.blurry;
   if (B.scope !== state.scope.blurry || B.stale) {
@@ -433,34 +661,36 @@ function viewBlurry(main) {
     B.dec = new Map();
     B.scope = state.scope.blurry;
     B.stale = false;
+    B.loupe = true;
+    B.outLabel = t('stamp_out');
+    B.outHint = t('h_out');
   }
   const out = swipeOut(B).length, kept = B.dec.size - out;
   const head = `<div class="rv-head">${scopeSelect('scope', state.scope.blurry)}
-      ${B.i < B.items.length ? `<b>Кадр ${B.i + 1} из ${B.items.length}</b>` : ''}
-      <span class="mut"><span style="color:var(--bad)">✕ ${out}</span> · <span style="color:var(--ok)">✓ ${kept}</span></span>
+      ${B.i < B.items.length ? `<b>${t('shot_n', B.i + 1, B.items.length)}</b>` : ''}
+      ${tally(out, kept)}
       <span class="grow"></span>
-      ${B.hidden ? `<button class="link small" id="reset">показать ещё ${shots(B.hidden)}, которые вы оставили раньше</button>` : ''}
-      ${B.i < B.items.length && out ? `<button class="btn" id="apply">Применить сейчас (${out})</button>` : ''}</div>`;
+      ${B.hidden ? `<button class="link small" id="reset">${t('show_kept', shots(B.hidden))}</button>` : ''}
+      ${B.i < B.items.length && out ? `<button class="btn" id="apply">${t('apply_now', out)}</button>` : ''}</div>
+      ${B.items.length ? progressBar(B.i, B.items.length) : ''}`;
   const bind = () => {
     $('#scope', main).onchange = e => { state.scope.blurry = e.target.value; render(); };
-    const r = $('#reset', main);
-    if (r) r.onclick = () => { saveKept(new Set()); B.stale = true; render(); };
-    const a = $('#apply', main);
-    if (a) a.onclick = applyBlurry;
+    $('#reset', main)?.addEventListener('click', () => { saveKept(new Set()); B.stale = true; render(); });
+    $('#apply', main)?.addEventListener('click', applyBlurry);
   };
 
   if (!B.items.length) {
-    main.innerHTML = `<h1>${title}</h1>${head}<div class="empty"><div class="big">✓</div><h2>Смазанных кадров не найдено</h2></div>`;
+    main.innerHTML = `<h1>${title}</h1>${head}<div class="empty"><div class="big">${icon('check', 54)}</div><h2>${t('no_blurry')}</h2></div>`;
     return bind();
   }
   main.classList.add('fill');
 
   if (B.i >= B.items.length) {
-    main.innerHTML = `${head}<div class="empty"><div class="big">🎉</div><h2>Всё просмотрено</h2>
-      <p>${out ? `${shots(out)} уйдут в «_на проверку (смазанные)», ${shots(kept)} остаются.` : 'Вы всё оставили — переносить нечего.'}</p>
+    main.innerHTML = `${head}<div class="empty"><div class="big">🎉</div><h2>${t('all_seen')}</h2>
+      <p>${out ? t('blurry_end', shots(out), shots(kept)) : t('nothing_out')}</p>
       <div class="row" style="justify-content:center;margin-top:16px">
-        <button class="btn" id="back1">← Вернуться к последнему</button>
-        ${out ? `<button class="btn primary" id="done" ${state.busy ? 'disabled' : ''}>Убрать ${shots(out)} в проверку</button>` : `<button class="btn primary" id="done">Готово</button>`}
+        <button class="btn" id="back1">${t('back_last')}</button>
+        <button class="btn primary" id="done" ${state.busy ? 'disabled' : ''}>${out ? t('move_n', shots(out)) : t('done')}</button>
       </div></div>`;
     bind();
     $('#back1', main).onclick = () => swipeBack(B);
@@ -468,40 +698,85 @@ function viewBlurry(main) {
     return;
   }
 
-  main.innerHTML = head + swipeStage(B, r => `резкость ${Math.round(r.rel * 100)}% от обычной для папки`);
+  main.innerHTML = head + swipeStage(B, r => t('sharpness', Math.round(r.rel * 100)));
   bind();
   swipeBind(main, B);
 }
+const tally = (out, kept) =>
+  `<span class="mut tally"><span class="bad-txt">✕ ${out}</span> · <span class="ok-txt">✓ ${kept}</span></span>`;
 
 // ---------- swipe (shared by blurry and mindful import) ----------
 
+let swipeZoom = null;
 function swipeStage(S, info) {
   const r = S.items[S.i], nx = S.items[S.i + 1];
   hoverPath = r.path;
+  const loupe = S.loupe && r.sharp_u != null;
   return `<div class="tinder">
       ${nx ? `<div class="tcard under"><img data-path="${esc(nx.path)}" alt=""></div>` : ''}
-      <div class="tcard" id="tcard">
-        <img data-path="${esc(r.path)}" alt="">
-        <span class="stamp s-out">${S.outLabel || 'В ПРОВЕРКУ'}</span><span class="stamp s-keep">ОСТАВИТЬ</span>
+      <div class="tcard zoom" id="tcard">
+        <img class="zimg" data-path="${esc(r.path)}" alt="">
+        <span class="stamp s-out">${S.outLabel}</span><span class="stamp s-keep">${t('stamp_keep')}</span>
+        <div class="exif" id="exif" ${exifOn() ? '' : 'hidden'}></div>
+        <span class="zbadge"></span>
         <span class="fname">${esc(r.folder)} · ${esc(r.name)}${info ? ' · ' + info(r) : ''}</span>
       </div>
+      ${loupe ? `<div class="loupe" id="loupe" title="${t('loupe')}" hidden><img alt=""><span>${t('loupe')}</span></div>` : ''}
     </div>
     <div class="tbtns">
-      <button class="round bad" id="no" title="Убрать (←)">✕</button>
-      <button class="round" id="undo1" title="Вернуть предыдущий (Backspace)" ${S.i ? '' : 'disabled'}>↶</button>
-      <button class="round ok" id="yes" title="Оставить (→)">✓</button>
+      <button class="round bad" id="no" title="${t('t_out')}">✕</button>
+      <button class="round" id="undo1" title="${t('t_back')}" ${S.i ? '' : 'disabled'}>↶</button>
+      <button class="round ok" id="yes" title="${t('t_keep')}">✓</button>
     </div>
-    <div class="rv-foot" style="justify-content:center"><span><kbd>←</kbd> ${S.outHint || 'в проверку'}</span><span><kbd>→</kbd> оставить</span>
-      <span><kbd>⌫</kbd> вернуть предыдущий</span><span><kbd>Z</kbd> удерживать — на весь экран</span><span>можно тянуть карточку мышью</span></div>`;
+    <div class="rv-foot" style="justify-content:center"><span><kbd>←</kbd> ${S.outHint}</span><span><kbd>→</kbd> ${t('h_keep')}</span>
+      <span><kbd>⌫</kbd> ${t('h_prev')}</span><span><kbd>${t('h_wheel')}</kbd> ${t('h_zoom')}</span>
+      <span><kbd>${t('h_space')}</kbd> ${t('h_1to1')}</span><span><kbd>I</kbd> ${t('h_info')}</span><span>${t('h_drag')}</span></div>`;
 }
 function swipeBind(main, S) {
+  const r = S.items[S.i], card = $('#tcard', main);
   fillThumbs(main, 1400);
   S.items.slice(S.i + 2, S.i + 5).forEach(x => thumb(x.path, 1400));
   $('#no', main).onclick = () => swipeDecide(S, 'out');
   $('#yes', main).onclick = () => swipeDecide(S, 'keep');
   $('#undo1', main).onclick = () => swipeBack(S);
-  dragCard($('#tcard', main), S);
+  dragCard(card, S);
+  const apply = bindZoom([card]);
+  swipeZoom = { card, apply };
+  fillExif(r);
+  const lp = $('#loupe', main);
+  if (lp) {
+    const img = lp.querySelector('img'), src = convertFileSrc(r.path), im = new Image();
+    im.onload = () => {
+      if (!lp.isConnected) return;
+      const w = lp.clientWidth, h = lp.clientHeight;
+      Object.assign(img.style, { width: im.naturalWidth + 'px', height: im.naturalHeight + 'px',
+        left: w / 2 - r.sharp_u * im.naturalWidth + 'px', top: h / 2 - r.sharp_v * im.naturalHeight + 'px' });
+      img.src = src;
+      lp.hidden = false;
+    };
+    im.src = src;
+    lp.onclick = () => { Z.s = 1; zoom1to1(card, apply, r.sharp_u, r.sharp_v); };
+  }
 }
+
+// Shot settings overlay; analysis records already carry them, imported shots ask the backend.
+const exifOn = () => ls('exif', '1') === '1';
+const shutter = s => (!s ? null : s >= 0.5 ? `${+s.toFixed(1)} s` : `1/${Math.round(1 / s)}`);
+async function fillExif(r) {
+  const el = $('#exif');
+  if (!el) return;
+  const x = r.iso != null ? r : await invoke('photo_info', { path: r.path }).catch(() => ({}));
+  if (!el.isConnected) return;
+  el.innerHTML = [x.model, x.iso && `ISO ${x.iso}`, shutter(x.t), x.f && `f/${+x.f.toFixed(1)}`,
+    x.fl && `${Math.round(x.fl)} ${t('mm')}`, x.ev ? `${x.ev > 0 ? '+' : ''}${x.ev.toFixed(1)} EV` : null]
+    .filter(Boolean).map(s => `<span>${esc(s)}</span>`).join('');
+}
+function toggleExif() {
+  lsSet('exif', exifOn() ? '0' : '1');
+  const el = $('#exif');
+  if (el) el.hidden = !exifOn();
+}
+
 function swipeOut(S) {
   return [...S.dec].filter(([, d]) => d === 'out').map(([p]) => p);
 }
@@ -514,6 +789,7 @@ function land() {
   flying = null;
   clearTimeout(f.timer);
   f.S.i++;
+  resetZoom();
   render();
 }
 function swipeDecide(S, d) {
@@ -532,6 +808,7 @@ function swipeBack(S) {
   if (!S.i) return;
   S.i--;
   S.dec.delete(S.items[S.i].path);
+  resetZoom();
   render();
 }
 function dragCard(card, S) {
@@ -556,12 +833,8 @@ function dragCard(card, S) {
 
 // ---------- mindful import ----------
 
-function mindfulOn() {
-  try { return localStorage.getItem('mindful') === '1'; } catch { return false; }
-}
-function setMindful(v) {
-  try { localStorage.setItem('mindful', v ? '1' : '0'); } catch {}
-}
+const mindfulOn = () => ls('mindful') === '1';
+const setMindful = v => lsSet('mindful', v ? '1' : '0');
 function startMindful(photos) {
   state.mindful = {
     items: photos.map(p => {
@@ -570,8 +843,8 @@ function startMindful(photos) {
     }),
     i: 0,
     dec: new Map(),
-    outLabel: 'В ОТСЕВ',
-    outHint: 'в отсев',
+    outLabel: t('stamp_rej'),
+    outHint: t('h_rej'),
   };
   go('mindful');
 }
@@ -579,28 +852,28 @@ function startMindful(photos) {
 function viewMindful(main) {
   const M = state.mindful;
   if (M && !M.items.length && state.busy) {
-    main.innerHTML = `<h1>Отбор после импорта</h1><div class="empty"><span class="spin"></span><h2>Переношу в отсев…</h2></div>`;
+    main.innerHTML = `<h1>${t('mindful_title')}</h1><div class="empty"><span class="spin"></span><h2>${t('moving_rej')}</h2></div>`;
     return;
   }
   if (!M?.items.length) {
-    main.innerHTML = `<h1>Отбор после импорта</h1><div class="empty"><div class="big">◎</div><h2>Нечего отбирать</h2>
-      <p>Включите «осознанный импорт» на экране импорта — после копирования сюда попадут новые кадры.</p></div>`;
+    main.innerHTML = `<h1>${t('mindful_title')}</h1><div class="empty"><div class="big">${icon('mindful', 54)}</div><h2>${t('nothing_pick')}</h2>
+      <p>${t('nothing_pick_sub')}</p></div>`;
     return;
   }
   main.classList.add('fill');
   const out = swipeOut(M).length, kept = M.dec.size - out;
-  const head = `<div class="rv-head"><b>Отбор после импорта</b>
-      ${M.i < M.items.length ? `<span class="mut">кадр ${M.i + 1} из ${M.items.length}</span>` : ''}
-      <span class="mut"><span style="color:var(--bad)">✕ ${out}</span> · <span style="color:var(--ok)">✓ ${kept}</span></span>
+  const head = `<div class="rv-head"><b>${t('mindful_title')}</b>
+      ${M.i < M.items.length ? `<span class="mut">${t('shot_n', M.i + 1, M.items.length)}</span>` : ''}
+      ${tally(out, kept)}
       <span class="grow"></span>
-      ${M.i < M.items.length && out ? `<button class="btn" id="apply">Применить сейчас (${out})</button>` : ''}</div>`;
+      ${M.i < M.items.length && out ? `<button class="btn" id="apply">${t('apply_now', out)}</button>` : ''}</div>
+      ${progressBar(M.i, M.items.length)}`;
   if (M.i >= M.items.length) {
-    const rest = M.items.length;
-    main.innerHTML = `${head}<div class="empty"><div class="big">🎉</div><h2>Все ${shots(rest)} просмотрены</h2>
-      <p>${out ? `${shots(kept)} остаются в папках по дням, ${shots(out)} вместе с RAW уйдут в «_на проверку (отсев)».` : 'Вы всё оставили — переносить нечего.'}</p>
+    main.innerHTML = `${head}<div class="empty"><div class="big">🎉</div><h2>${t('all_seen_n', shots(M.items.length))}</h2>
+      <p>${out ? t('mindful_end', shots(kept), shots(out)) : t('nothing_out')}</p>
       <div class="row" style="justify-content:center;margin-top:16px">
-        <button class="btn" id="back1">← Вернуться к последнему</button>
-        <button class="btn primary" id="done" ${state.busy ? 'disabled' : ''}>${out ? `Убрать ${shots(out)} в отсев` : 'Готово'}</button>
+        <button class="btn" id="back1">${t('back_last')}</button>
+        <button class="btn primary" id="done" ${state.busy ? 'disabled' : ''}>${out ? t('move_rej_n', shots(out)) : t('done')}</button>
       </div></div>`;
     $('#back1', main).onclick = () => swipeBack(M);
     $('#done', main).onclick = applyMindful;
@@ -612,67 +885,66 @@ function viewMindful(main) {
 }
 function applyMindful() {
   const M = state.mindful, out = swipeOut(M);
-  if (!out.length) { M.items = M.items.slice(M.i); M.i = 0; M.dec = new Map(); if (!M.items.length) { state.mindful = null; go('import'); } else render(); return; }
+  if (!out.length) {
+    M.items = M.items.slice(M.i);
+    M.i = 0;
+    M.dec = new Map();
+    if (!M.items.length) { state.mindful = null; go('import'); } else render();
+    return;
+  }
   // Keep the undecided tail so the pass can continue after an early apply.
   const done = new Set(M.items.slice(0, M.i).map(r => r.path));
   M.items = M.items.filter(r => !done.has(r.path));
   M.i = 0;
   M.dec = new Map();
   if (state.report) state.report.photos = state.report.photos.filter(p => !out.includes(p));
-  return applyMoves('отсев', out).then(() => { if (!M.items.length) { state.mindful = null; go('import'); } });
+  return applyMoves('rejects', out).then(() => { if (!M.items.length) { state.mindful = null; go('import'); } });
 }
 
 function applyBlurry() {
   const B = state.blurry;
-  const blurryOut = () => swipeOut(B);
   const keptNow = [...B.dec].filter(([, d]) => d === 'keep').map(([p]) => p);
   if (keptNow.length) { keptNow.forEach(p => B.kept.add(p)); saveKept(B.kept); }
-  const out = blurryOut();
+  const out = swipeOut(B);
   if (!out.length) { B.stale = true; return render(); }
-  return applyMoves('смазанные', out);
+  return applyMoves('blurry', out);
 }
 
 // ---------- moves ----------
 
 function applyMoves(kind, paths) {
   if (!paths.length) return;
-  return task('move', 'Переношу…', async () => {
-    const n = await invoke('move_to_review', { library: state.lib, kind, paths });
+  const folder = folderFor(kind);
+  return task('move', t('task_move'), async () => {
+    const n = await invoke('move_to_review', { library: state.lib, folder, paths });
     const gone = new Set(paths);
     if (state.recs) state.recs = state.recs.filter(r => !gone.has(r.path));
     state.dupes.groups = [];
     state.blurry.stale = true;
     state.review.items = null;
-    const dir = await invoke('review_dir', { library: state.lib, kind });
-    const t = toast(`Перенесено ${files(n)} в «${esc(dir.split(/[\\/]/).pop())}» <button class="btn" id="tReveal">Показать</button><button class="btn" id="tUndo">Отменить</button>`, 12000);
-    $('#tReveal', t).onclick = () => opener.revealItemInDir(dir);
-    $('#tUndo', t).onclick = undo;
+    const dir = await invoke('review_dir', { library: state.lib, folder });
+    const el = toast(`${t('moved', files(n), esc(folder))} <button class="btn" id="tReveal">${t('show')}</button><button class="btn" id="tUndo">${t('undo')}</button>`, 12000);
+    $('#tReveal', el).onclick = () => opener.revealItemInDir(dir);
+    $('#tUndo', el).onclick = undo;
+    loadReview().then(updateNav).catch(() => {});
   });
 }
 
 function undo() {
   $('#toast').hidden = true;
-  return task('undo', 'Возвращаю…', async () => {
+  return task('undo', t('task_undo'), async () => {
     const n = await invoke('undo_last', { library: state.lib });
     state.recs = null;
     state.review.items = null;
     state.dupes.groups = [];
     state.blurry.stale = true;
-    toast(`Возвращено ${files(n)}`);
+    toast(t('returned', files(n)));
     await invoke('analyze', { library: state.lib }).then(r => (state.recs = r));
+    loadReview().then(updateNav).catch(() => {});
   });
 }
 
 // ---------- review folders ----------
-
-function lazyThumbs(root, size) {
-  const io = new IntersectionObserver(es => es.forEach(e => {
-    if (!e.isIntersecting) return;
-    io.unobserve(e.target);
-    thumb(e.target.dataset.path, size).then(src => { if (src) e.target.src = src; });
-  }), { root: $('#main'), rootMargin: '400px' });
-  root.querySelectorAll('img[data-path]').forEach(img => io.observe(img));
-}
 
 async function loadReview() {
   state.review.items = await invoke('list_review', { library: state.lib });
@@ -681,45 +953,46 @@ async function loadReview() {
 
 async function viewReview(main) {
   const R = state.review;
-  const title = 'На проверке', sub = 'Сюда приложение откладывает кадры вместо удаления. Посмотрите и верните нужное; когда уверены, что остальное не нужно, — удалите папку в Finder.';
+  const title = t('review_title'), sub = t('review_sub');
   if (!R.items) {
     main.innerHTML = `<h1>${title}</h1><p class="sub">${sub}</p><div class="empty"><span class="spin"></span></div>`;
     try { await loadReview(); } catch (e) { return showError(e); }
     if (state.view !== 'review') return;
+    updateNav();
   }
-  const kinds = [...new Set(R.items.map(i => i.kind))];
-  if (!kinds.length) {
-    main.innerHTML = `<h1>${title}</h1><p class="sub">${sub}</p><div class="empty"><div class="big">✓</div><h2>Папки проверки пусты</h2></div>`;
+  const dirs = [...new Set(R.items.map(i => i.dir))];
+  if (!dirs.length) {
+    main.innerHTML = `<h1>${title}</h1><p class="sub">${sub}</p><div class="empty"><div class="big">${icon('check', 54)}</div><h2>${t('review_empty')}</h2></div>`;
     return;
   }
-  if (!kinds.includes(R.kind)) { R.kind = kinds[0]; R.folder = '*'; }
-  const ofKind = R.items.filter(i => i.kind === R.kind);
-  const fl = [...new Set(ofKind.map(i => i.folder))].sort((a, b) => a.localeCompare(b, 'ru', { numeric: true }));
+  if (!dirs.includes(R.dir)) { R.dir = dirs[0]; R.folder = '*'; }
+  const ofDir = R.items.filter(i => i.dir === R.dir);
+  const fl = [...new Set(ofDir.map(i => i.folder))].sort((a, b) => a.localeCompare(b, LANG, { numeric: true }));
   if (R.folder !== '*' && !fl.includes(R.folder)) R.folder = '*';
-  const shown = ofKind.filter(i => R.folder === '*' || i.folder === R.folder);
-  const sum = a => a.reduce((t, i) => t + i.size + i.raw_size, 0);
-  const sel = [...R.sel].filter(p => ofKind.some(i => i.path === p));
+  const shown = ofDir.filter(i => R.folder === '*' || i.folder === R.folder);
+  const sum = a => a.reduce((s, i) => s + i.size + i.raw_size, 0);
+  const selIn = () => [...R.sel].filter(p => ofDir.some(i => i.path === p));
   main.innerHTML = `<h1>${title}</h1><p class="sub">${sub}</p>
-    <div class="chips">${kinds.map(k => {
-      const a = R.items.filter(i => i.kind === k);
-      return `<div class="chip ${k === R.kind ? 'on' : ''}" data-kind="${esc(k)}">${esc(k)} · ${shots(a.length)} · ${gb(sum(a))}</div>`;
+    <div class="chips">${dirs.map(d => {
+      const a = R.items.filter(i => i.dir === d);
+      return `<div class="chip ${d === R.dir ? 'on' : ''}" data-dir="${esc(d)}" title="${esc(d)}">${esc(kindLabel(a[0].kind))} · ${shots(a.length)} · ${gb(sum(a))}</div>`;
     }).join('')}</div>
     <div class="row" style="margin-bottom:16px">
-      <select id="rfolder"><option value="*">Все папки (${ofKind.length})</option>${fl.map(f =>
-        `<option value="${esc(f)}" ${f === R.folder ? 'selected' : ''}>${esc(f)} (${ofKind.filter(i => i.folder === f).length})</option>`).join('')}</select>
-      <span class="mut">${gb(sum(shown))} вместе с RAW</span><span class="grow"></span>
-      <button class="btn" id="rall">${shown.every(i => R.sel.has(i.path)) ? 'Снять выделение' : 'Выбрать все'}</button>
-      <button class="btn" id="rshow">Показать в Finder</button>
-      <button class="btn primary" id="rback" ${sel.length && !state.busy ? '' : 'disabled'}>Вернуть ${shots(sel.length)} в библиотеку</button>
+      <select id="rfolder"><option value="*">${t('all_folders', ofDir.length)}</option>${fl.map(f =>
+        `<option value="${esc(f)}" ${f === R.folder ? 'selected' : ''}>${esc(f)} (${ofDir.filter(i => i.folder === f).length})</option>`).join('')}</select>
+      <span class="mut">${t('with_raw', gb(sum(shown)))}</span><span class="grow"></span>
+      <button class="btn" id="rall">${shown.every(i => R.sel.has(i.path)) ? t('sel_none') : t('sel_all')}</button>
+      <button class="btn" id="rshow">${revealLabel()}</button>
+      <button class="btn primary" id="rback" ${selIn().length && !state.busy ? '' : 'disabled'}>${t('restore_n', shots(selIn().length))}</button>
     </div>
     <div class="grid">${shown.map(i => `
       <div class="cell ${R.sel.has(i.path) ? 'back' : ''}" data-path="${esc(i.path)}">
-        <img data-path="${esc(i.path)}" alt=""><span class="tag">${R.sel.has(i.path) ? '↩ вернуть' : esc(i.folder)}</span>
+        <img data-path="${esc(i.path)}" alt=""><span class="tag">${R.sel.has(i.path) ? t('back_tag') : esc(i.folder)}</span>
         <span class="fname">${esc(i.name)}${i.raws ? ' + RAW' : ''}</span></div>`).join('')}</div>
-    <div class="rv-foot"><span><kbd>клик</kbd> выбрать для возврата</span><span><kbd>двойной клик</kbd> открыть в Просмотре</span>
-      <span>наведите и удерживайте <kbd>Z</kbd> — на весь экран</span></div>`;
+    <div class="rv-foot"><span><kbd>${t('h_click')}</kbd> ${t('h_select')}</span><span><kbd>${t('h_dbl')}</kbd> ${t('h_open')}</span>
+      <span><kbd>Z</kbd> ${t('h_hold')}</span></div>`;
   lazyThumbs(main, 640);
-  main.querySelectorAll('.chip[data-kind]').forEach(c => (c.onclick = () => { R.kind = c.dataset.kind; R.folder = '*'; render(); }));
+  main.querySelectorAll('.chip[data-dir]').forEach(c => (c.onclick = () => { R.dir = c.dataset.dir; R.folder = '*'; render(); }));
   $('#rfolder', main).onchange = e => { R.folder = e.target.value; render(); };
   $('#rall', main).onclick = () => {
     const all = shown.every(i => R.sel.has(i.path));
@@ -727,20 +1000,19 @@ async function viewReview(main) {
     render();
   };
   $('#rshow', main).onclick = async () => {
-    const dir = await invoke('review_dir', { library: state.lib, kind: R.kind });
+    const dir = await invoke('review_dir', { library: state.lib, folder: R.dir });
     opener.revealItemInDir(R.folder === '*' ? dir : dir + '/' + R.folder);
   };
-  $('#rback', main).onclick = () => restoreSelected([...R.sel].filter(p => ofKind.some(i => i.path === p)));
+  $('#rback', main).onclick = () => restoreSelected(selIn());
   main.querySelectorAll('.cell').forEach(el => {
     const p = el.dataset.path;
     el.onclick = () => {
       R.sel.has(p) ? R.sel.delete(p) : R.sel.add(p);
       const on = R.sel.has(p);
       el.classList.toggle('back', on);
-      el.querySelector('.tag').textContent = on ? '↩ вернуть' : R.items.find(i => i.path === p).folder;
-      const n = [...R.sel].filter(q => ofKind.some(i => i.path === q)).length;
-      const b = $('#rback', main);
-      b.textContent = `Вернуть ${shots(n)} в библиотеку`;
+      el.querySelector('.tag').textContent = on ? t('back_tag') : R.items.find(i => i.path === p).folder;
+      const n = selIn().length, b = $('#rback', main);
+      b.textContent = t('restore_n', shots(n));
       b.disabled = !n || state.busy;
     };
     el.ondblclick = () => opener.openPath(p);
@@ -750,11 +1022,11 @@ async function viewReview(main) {
 
 function restoreSelected(paths) {
   if (!paths.length) return;
-  return task('restore', 'Возвращаю в библиотеку…', async () => {
+  return task('restore', t('task_restore'), async () => {
     const n = await invoke('restore_from_review', { library: state.lib, paths });
     await loadReview();
-    const t = toast(`Возвращено ${files(n)} на свои места <button class="btn" id="tUndo">Отменить</button>`, 12000);
-    $('#tUndo', t).onclick = undo;
+    const el = toast(`${t('returned_home', files(n))} <button class="btn" id="tUndo">${t('undo')}</button>`, 12000);
+    $('#tUndo', el).onclick = undo;
     render();
     state.dupes.groups = [];
     state.blurry.stale = true;
@@ -782,51 +1054,48 @@ function bucket(recs, val, edges, label) {
 }
 
 function viewStats(main) {
-  const title = 'Статистика';
-  if (!state.recs) return needAnalysis(main, title, 'Сводка по настройкам съёмки и типичным проблемам.');
+  const title = t('stats_title');
+  if (!state.recs) return needAnalysis(main, title, t('stats_sub'));
   const recs = scoped(state.scope.stats);
   const n = recs.length || 1;
   const pct = c => Math.round(100 * c / n) + '%';
-  const shutter = r => (r.t ? 1 / r.t : null);
+  const speed = r => (r.t ? 1 / r.t : null);
+  const mm = t('mm');
 
   const isoRows = bucket(recs, r => r.iso, [0, 400, 800, 1600, 3200, 6400, 12800], (a, b) => (b ? `${a || '≤'}–${b}` : `${a}+`));
   isoRows[0][0] = '< 400';
   const fRows = bucket(recs, r => r.f, [0, 2, 2.8, 4, 5.6, 8, 11], (a, b) => (b ? `f/${a}–${b}` : `f/${a}+`));
   fRows[0][0] = '< f/2';
-  const tRows = bucket(recs, shutter, [0, 30, 60, 125, 250, 1000], (a, b) => (b ? `1/${a}–1/${b}` : `1/${a}+`));
-  tRows[0][0] = 'длиннее 1/30';
-  const flRows = bucket(recs, r => r.fl, [0, 18, 24, 35, 45, 55, 100], (a, b) => (b ? `${a}–${b} мм` : `${a}+ мм`));
+  const tRows = bucket(recs, speed, [0, 30, 60, 125, 250, 1000], (a, b) => (b ? `1/${a}–1/${b}` : `1/${a}+`));
+  tRows[0][0] = t('slower');
+  const flRows = bucket(recs, r => r.fl, [0, 18, 24, 35, 45, 55, 100], (a, b) => (b ? `${a}–${b} ${mm}` : `${a}+ ${mm}`));
 
   const issues = [];
-  const add = (list, title, text) => list.length && issues.push({ list, title, text });
-  add(recs.filter(r => r.iso >= 3200 && r.t && r.t <= 1 / 100), 'Высокий ISO при быстрой выдержке',
-    'ISO 3200+ при выдержке 1/100 и короче. Для неподвижных сцен можно 1/30–1/60 (стабилизатор), ISO упадёт в 2–4 раза. В настройках авто-ISO: ISO AUTO SETTING → MIN. SHUTTER SPEED.');
-  add(recs.filter(r => r.fl && r.t && r.t > 1 / (1.5 * r.fl) && r.t > 1 / 60), 'Риск смаза движения',
-    'Выдержка длиннее 1/60 и длиннее «1/фокусное». Для детей в движении нужна 1/250.');
-  add(recs.filter(r => r.f >= 11), 'Очень закрытая диафрагма (f/11+)',
-    'Дифракция смягчает картинку, а ISO растёт. Часто — случайно задетый диск.');
-  add(recs.filter(r => r.hi > 0.03), 'Пересвеченные участки',
-    'Больше 3% кадра в белом. Попробуйте экспокоррекцию −2/3 или DR400; из RAF часть деталей можно вытянуть.');
-  add(recs.filter(r => r.lo > 0.05), 'Провалы в тенях', 'Больше 5% кадра в чёрном.');
+  const add = (list, k) => list.length && issues.push({ list, title: t(k), text: t(k + '_t') });
+  add(recs.filter(r => r.iso >= 3200 && r.t && r.t <= 1 / 100), 'i_iso');
+  add(recs.filter(r => r.fl && r.t && r.t > 1 / (1.5 * r.fl) && r.t > 1 / 60), 'i_motion');
+  add(recs.filter(r => r.f >= 11), 'i_f11');
+  add(recs.filter(r => r.hi > 0.03), 'i_hi');
+  add(recs.filter(r => r.lo > 0.05), 'i_lo');
   const ends = recs.filter(r => r.fl && (Math.round(r.fl) <= 16 || Math.round(r.fl) >= 50)).length;
 
   main.innerHTML = `<h1>${title}</h1>
     <div class="row" style="margin:6px 0 18px">${scopeSelect('scope', state.scope.stats)}</div>
     <div class="kpis">
-      <div class="kpi"><b>${recs.length.toLocaleString('ru')}</b><span>кадров JPG</span></div>
-      <div class="kpi"><b>${pct(recs.filter(r => r.iso >= 3200).length)}</b><span>с ISO 3200+</span></div>
-      <div class="kpi"><b>${pct(recs.filter(r => r.vertical).length)}</b><span>вертикальных</span></div>
-      <div class="kpi"><b>${pct(ends)}</b><span>на крайних фокусных зума</span></div>
+      <div class="kpi"><b>${fmtN(recs.length)}</b><span>${t('k_jpg')}</span></div>
+      <div class="kpi"><b>${pct(recs.filter(r => r.iso >= 3200).length)}</b><span>${t('k_iso')}</span></div>
+      <div class="kpi"><b>${pct(recs.filter(r => r.vertical).length)}</b><span>${t('k_vert')}</span></div>
+      <div class="kpi"><b>${pct(ends)}</b><span>${t('k_ends')}</span></div>
     </div>
     <div class="charts">
-      <div class="panel"><h3>ISO</h3>${bars(isoRows, k => /^(3200|6400|12800)/.test(k))}</div>
-      <div class="panel"><h3>Выдержка</h3>${bars(tRows, k => k.startsWith('длиннее'))}</div>
-      <div class="panel"><h3>Диафрагма</h3>${bars(fRows, k => k.includes('f/11'))}</div>
-      <div class="panel"><h3>Фокусное расстояние</h3>${bars(flRows)}</div>
+      <div class="panel"><h3>${t('c_iso')}</h3>${bars(isoRows, k => /^(3200|6400|12800)/.test(k))}</div>
+      <div class="panel"><h3>${t('c_shutter')}</h3>${bars(tRows, k => k === t('slower'))}</div>
+      <div class="panel"><h3>${t('c_aperture')}</h3>${bars(fRows, k => k.includes('f/11'))}</div>
+      <div class="panel"><h3>${t('c_focal')}</h3>${bars(flRows)}</div>
     </div>
-    <div class="panel"><h3>На что обратить внимание</h3>
+    <div class="panel"><h3>${t('issues')}</h3>
       ${issues.length ? issues.map(i => `<div class="issue"><div class="cnt">${i.list.length}</div><div>
-        <b>${i.title}</b> <span class="mut">· ${pct(i.list.length)}</span><p>${i.text}</p></div></div>`).join('') : '<div class="mut">Ничего подозрительного.</div>'}
+        <b>${i.title}</b> <span class="mut">· ${pct(i.list.length)}</span><p>${i.text}</p></div></div>`).join('') : `<div class="mut">${t('no_issues')}</div>`}
     </div>`;
   $('#scope', main).onchange = e => { state.scope.stats = e.target.value; render(); };
 }
@@ -836,23 +1105,19 @@ function viewStats(main) {
 async function viewSettings(main) {
   const undoN = await invoke('undo_count', { library: state.lib }).catch(() => 0);
   if (state.view !== 'settings') return;
-  main.innerHTML = `<h1>Настройки</h1><p class="sub">Библиотека — папка, куда импортируются фото и где ищутся дубли.</p>
-    <div class="panel"><h3>Папка библиотеки</h3><div style="margin-bottom:10px">${esc(state.lib)}</div>
-      <div class="row"><button class="btn" id="pick">Изменить…</button><button class="btn" id="reveal">Показать в Finder</button></div></div>
-    <div class="panel"><h3>Перемещения в «_на проверку»</h3>
-      <div class="mut" style="margin-bottom:10px">В истории ${plural(undoN, 'действие', 'действия', 'действий')}. Отмена возвращает файлы на прежние места.</div>
-      <button class="btn" id="undo" ${undoN && !state.busy ? '' : 'disabled'}>Отменить последнее перемещение</button></div>
-    <div class="panel"><h3>Кэш анализа</h3><div class="mut" style="margin-bottom:10px">Пересчитать, если папки менялись вручную.</div>
-      <button class="btn" id="reanalyze" ${state.busy ? 'disabled' : ''}>Обновить анализ</button></div>`;
-  $('#pick', main).onclick = async () => {
-    const dir = await dialog.open({ directory: true, defaultPath: state.lib });
-    if (!dir) return;
-    try {
-      const s = await invoke('set_library', { library: dir });
-      setLib(s.library);
-      render();
-    } catch (e) { showError(e); }
-  };
+  main.innerHTML = `<h1>${t('settings_title')}</h1><p class="sub">${t('settings_sub')}</p>
+    <div class="panel"><h3>${t('s_lang')}</h3><div class="mut small" style="margin-bottom:10px">${t('s_lang_sub')}</div>
+      <div class="seg">${['ru', 'en'].map(l => `<button data-lang="${l}" class="${l === LANG ? 'on' : ''}">${l === 'ru' ? 'Русский' : 'English'}</button>`).join('')}</div></div>
+    <div class="panel"><h3>${t('s_lib')}</h3>
+      <div class="pathrow">${icon('folder', 16)}<span>${esc(state.lib)}</span>
+        <button class="btn" id="pick">${t('change')}</button><button class="btn" id="reveal">${revealLabel()}</button></div></div>
+    <div class="panel"><h3>${t('s_moves')}</h3>
+      <div class="mut" style="margin-bottom:10px">${t('s_moves_sub', t('actions', undoN))}</div>
+      <button class="btn" id="undo" ${undoN && !state.busy ? '' : 'disabled'}>${t('s_undo')}</button></div>
+    <div class="panel"><h3>${t('s_cache')}</h3><div class="mut" style="margin-bottom:10px">${t('s_cache_sub')}</div>
+      <button class="btn" id="reanalyze" ${state.busy ? 'disabled' : ''}>${t('s_reanalyze')}</button></div>`;
+  bindLang(main);
+  $('#pick', main).onclick = pickLibrary;
   $('#reveal', main).onclick = () => opener.revealItemInDir(state.lib);
   $('#undo', main).onclick = undo;
   $('#reanalyze', main).onclick = () => { state.recs = null; ensureRecs(); };
@@ -871,27 +1136,66 @@ function setLib(lib) {
   $('#lib').title = lib;
 }
 
+// ---------- nav ----------
+
+const NAV = ['import', 'mindful', 'dupes', 'blurry', 'review', 'stats', 'verify'];
+function buildNav() {
+  const item = v => `<button data-view="${v}">${icon(v)}<span class="lbl">${t('nav_' + v)}</span><span class="badge" id="b-${v}"></span></button>`;
+  $('#nav').innerHTML = `<div class="brand" data-tauri-drag-region>Photo Sorter</div>
+    ${NAV.map(item).join('')}<div class="spacer" data-tauri-drag-region></div>${item('settings')}<div id="lib" class="lib"></div>`;
+  $('#nav').querySelectorAll('button[data-view]').forEach(b => (b.onclick = () => go(b.dataset.view)));
+}
+
+// Badge counts are recomputed only when the analysis records change.
+let badgeMemo = { recs: null, dupes: 0, blurry: 0 };
+function updateNav() {
+  if (state.recs !== badgeMemo.recs) {
+    const kept = loadKept();
+    badgeMemo = {
+      recs: state.recs,
+      dupes: state.recs ? findBursts(state.recs).length : 0,
+      blurry: state.recs ? findBlurry(state.recs).filter(r => !kept.has(r.path)).length : 0,
+    };
+  }
+  const M = state.mindful, left = M ? M.items.length - M.i : 0;
+  const counts = { dupes: badgeMemo.dupes, blurry: badgeMemo.blurry, review: state.review.items?.length || 0, mindful: left };
+  NAV.concat('settings').forEach(v => {
+    const b = $(`#nav [data-view="${v}"]`);
+    if (!b) return;
+    b.classList.toggle('active', state.view === v);
+    const el = $('#b-' + v);
+    el.textContent = counts[v] ? fmtN(counts[v]) : '';
+  });
+  $('#nav [data-view="mindful"]').hidden = !(left > 0 || state.view === 'mindful');
+}
+
 // ---------- routing & keys ----------
 
-const views = { import: viewImport, verify: viewVerify, dupes: viewDupes, blurry: viewBlurry, review: viewReview, mindful: viewMindful, stats: viewStats, settings: viewSettings };
+const views = { welcome: viewWelcome, import: viewImport, verify: viewVerify, dupes: viewDupes, blurry: viewBlurry,
+  review: viewReview, mindful: viewMindful, stats: viewStats, settings: viewSettings };
 function render() {
   const main = $('#main');
   main.classList.remove('fill');
   views[state.view](main);
+  updateNav();
 }
 function go(v) {
   state.view = v;
-  document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('active', b.dataset.view === v));
-  $('#main').scrollTop = 0;
+  const main = $('#main');
+  main.scrollTop = 0;
+  main.classList.remove('enter');
+  void main.offsetWidth;
+  main.classList.add('enter');
+  resetZoom();
   render();
   if (v === 'import' && state.card && !state.plan) scan();
 }
-document.querySelectorAll('#nav button').forEach(b => (b.onclick = () => go(b.dataset.view)));
 
 let hoverPath = null;
 addEventListener('keydown', e => {
-  if (e.metaKey || e.ctrlKey || e.target.tagName === 'SELECT') return;
+  if (e.metaKey || e.ctrlKey || ['SELECT', 'INPUT'].includes(e.target.tagName)) return;
   const k = e.key.toLowerCase();
+  const swipe = { blurry: state.blurry, mindful: state.mindful }[state.view];
   if ((k === 'z' || k === 'я') && hoverPath && !e.repeat && ['dupes', 'blurry', 'review', 'mindful'].includes(state.view)) {
     const z = $('#zoom');
     z.querySelector('img').src = '';
@@ -899,11 +1203,19 @@ addEventListener('keydown', e => {
     z.hidden = false;
     return;
   }
-  const S = { blurry: state.blurry, mindful: state.mindful }[state.view];
-  if (S?.items?.length) {
-    if (k === 'arrowleft') { e.preventDefault(); swipeDecide(S, 'out'); }
-    else if (k === 'arrowright') { e.preventDefault(); swipeDecide(S, 'keep'); }
-    else if (k === 'backspace' || k === 'arrowup') { e.preventDefault(); swipeBack(S); }
+  if (k === 'escape' || k === '0') {
+    if (Z.s > 1) { resetZoom(); (state.view === 'dupes' ? dupesApply : swipeZoom?.apply)?.(); }
+    return;
+  }
+  if (swipe?.items?.length && swipe.i < swipe.items.length) {
+    if (k === 'arrowleft') { e.preventDefault(); swipeDecide(swipe, 'out'); }
+    else if (k === 'arrowright') { e.preventDefault(); swipeDecide(swipe, 'keep'); }
+    else if (k === 'backspace' || k === 'arrowup') { e.preventDefault(); swipeBack(swipe); }
+    else if (k === ' ') { e.preventDefault(); if (swipeZoom?.card.isConnected) zoom1to1(swipeZoom.card, swipeZoom.apply); }
+    else if (k === 'i' || k === 'ш') toggleExif();
+  } else if (swipe?.items?.length && k === 'backspace') {
+    e.preventDefault();
+    swipeBack(swipe);
   }
   if (state.view === 'dupes' && state.dupes.groups.length) {
     if (k === 'arrowright' || k === ' ') { e.preventDefault(); stepDupes(1); }
@@ -916,9 +1228,12 @@ addEventListener('keyup', e => {
 });
 
 (async () => {
+  buildNav();
   const s = await invoke('get_settings');
   setLib(s.library);
+  if (state.view === 'welcome') document.body.classList.add('welcome');
   render();
+  loadReview().then(updateNav).catch(() => {});
   await pollCards();
   setInterval(pollCards, 2500);
 })();

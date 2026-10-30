@@ -33,7 +33,37 @@ pub struct Rec {
     pub lo: f32,
     /// Max local edge variance over a 4×4 grid — high when anything in frame is sharp.
     pub sharp: f32,
+    /// Centre of the sharpest tile, 0..1 in the displayed (EXIF-rotated) frame.
+    #[serde(default)]
+    pub sharp_u: Option<f32>,
+    #[serde(default)]
+    pub sharp_v: Option<f32>,
     pub dhash: String,
+}
+
+#[derive(Serialize)]
+pub struct Info {
+    pub model: Option<String>,
+    pub lens: Option<String>,
+    pub iso: Option<f64>,
+    pub f: Option<f64>,
+    pub t: Option<f64>,
+    pub fl: Option<f64>,
+    pub ev: Option<f64>,
+}
+
+pub fn info(p: &Path) -> Info {
+    let ex = read_exif(p);
+    let ex = ex.as_ref();
+    Info {
+        model: ex.and_then(|e| text(e, exif::Tag::Model)),
+        lens: ex.and_then(|e| text(e, exif::Tag::LensModel)),
+        iso: ex.and_then(|e| num(e, exif::Tag::PhotographicSensitivity)),
+        f: ex.and_then(|e| num(e, exif::Tag::FNumber)),
+        t: ex.and_then(|e| num(e, exif::Tag::ExposureTime)),
+        fl: ex.and_then(|e| num(e, exif::Tag::FocalLength)),
+        ev: ex.and_then(|e| num(e, exif::Tag::ExposureBiasValue)),
+    }
 }
 
 /// Decode a JPEG using DCT scaling so the longest side is at least `max_side`, then shrink to it.
@@ -85,7 +115,7 @@ fn text(ex: &exif::Exif, tag: exif::Tag) -> Option<String> {
     }
 }
 
-fn metrics(g: &GrayImage) -> (f32, f32, f32, f32, String) {
+fn metrics(g: &GrayImage) -> (f32, f32, f32, f32, (f32, f32), String) {
     let (w, h) = g.dimensions();
     let n = (w * h) as f32;
     let px = g.as_raw();
@@ -95,6 +125,7 @@ fn metrics(g: &GrayImage) -> (f32, f32, f32, f32, String) {
 
     // Laplacian variance per tile; the sharpest tile decides.
     let mut sharp = 0f32;
+    let mut at = (0.5f32, 0.5f32);
     for ty in 0..4 {
         for tx in 0..4 {
             let (x0, x1) = ((tx * w / 4).max(1), ((tx + 1) * w / 4).min(w - 1));
@@ -109,8 +140,10 @@ fn metrics(g: &GrayImage) -> (f32, f32, f32, f32, String) {
                     c += 1.0;
                 }
             }
-            if c > 0.0 {
-                sharp = sharp.max((s2 / c - (s / c).powi(2)) as f32);
+            let var = if c > 0.0 { (s2 / c - (s / c).powi(2)) as f32 } else { 0.0 };
+            if var > sharp {
+                sharp = var;
+                at = ((tx as f32 + 0.5) / 4.0, (ty as f32 + 0.5) / 4.0);
             }
         }
     }
@@ -124,7 +157,7 @@ fn metrics(g: &GrayImage) -> (f32, f32, f32, f32, String) {
             }
         }
     }
-    (mean, hi, lo, sharp, format!("{bits:016x}"))
+    (mean, hi, lo, sharp, at, format!("{bits:016x}"))
 }
 
 fn analyze_one(p: &Path, lib: &Path, meta: &fs::Metadata) -> Option<Rec> {
@@ -132,7 +165,14 @@ fn analyze_one(p: &Path, lib: &Path, meta: &fs::Metadata) -> Option<Rec> {
     let orient = ex.as_ref().and_then(|e| num(e, exif::Tag::Orientation)).unwrap_or(1.0) as u32;
     let img = decode_jpeg(p, 800).ok()?;
     let gray = imageops::grayscale(&img);
-    let (mean, hi, lo, sharp, dhash) = metrics(&gray);
+    let (mean, hi, lo, sharp, (u, v), dhash) = metrics(&gray);
+    // Same rotation the viewer applies, so the point lands on the displayed image.
+    let (u, v) = match orient {
+        3 | 4 => (1.0 - u, 1.0 - v),
+        5 | 6 => (1.0 - v, u),
+        7 | 8 => (v, 1.0 - u),
+        _ => (u, v),
+    };
     let rel_parent = p.parent()?.strip_prefix(lib).ok()?.to_string_lossy().to_string();
     let (w, h) = img.dimensions();
     let rotated = matches!(orient, 5..=8);
@@ -155,6 +195,8 @@ fn analyze_one(p: &Path, lib: &Path, meta: &fs::Metadata) -> Option<Rec> {
         hi,
         lo,
         sharp,
+        sharp_u: Some(u),
+        sharp_v: Some(v),
         dhash,
     })
 }
@@ -177,12 +219,12 @@ pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, lib: &str) -> Result<Vec<Rec>,
         .filter_map(|(p, m)| {
             let key = p.to_string_lossy().to_string();
             let r = match cache.get(&key) {
-                Some(r) if r.size == m.len() && r.mtime == mtime_secs(m) => Some(r.clone()),
+                Some(r) if r.size == m.len() && r.mtime == mtime_secs(m) && r.sharp_u.is_some() => Some(r.clone()),
                 _ => analyze_one(p, lib, m),
             };
             let d = done.fetch_add(1, Ordering::Relaxed) + 1;
             if d % 10 == 0 || d == total {
-                emit(app, "analyze", d, total, "Анализирую кадры");
+                emit(app, "analyze", d, total, "@analyze");
             }
             r
         })

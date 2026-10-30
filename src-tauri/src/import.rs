@@ -59,10 +59,10 @@ fn card_root(card: &Path) -> PathBuf {
 pub fn scan<R: tauri::Runtime>(app: &AppHandle<R>, card: &str, lib: &str) -> Result<Plan, String> {
     let card = Path::new(card);
     let lib = Path::new(lib);
-    emit(app, "scan", 0, 0, "Читаю карту…");
+    emit(app, "scan", 0, 0, "@scan_card");
     let files = walk_media(&card_root(card), false);
 
-    emit(app, "scan", 0, 0, "Сверяю с библиотекой…");
+    emit(app, "scan", 0, 0, "@scan_lib");
     let have: HashSet<(String, u64)> = walk_media(lib, true)
         .into_iter()
         .filter_map(|p| {
@@ -152,7 +152,7 @@ fn copy_verified(src: &Path, dst: &Path) -> Result<String, String> {
         let want = hex::encode(h.finalize());
         let got = hash_file(&tmp).map_err(err)?;
         if want != got {
-            return Err("контрольная сумма копии не совпала".to_string());
+            return Err("@err_checksum".to_string());
         }
         let meta = fs::metadata(src).map_err(err)?;
         let _ = filetime::set_file_mtime(&tmp, filetime::FileTime::from_last_modification_time(&meta));
@@ -205,7 +205,7 @@ pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, items: Vec<Item>, lib: &str) -
         done += it.size;
     }
     cache.save(lib);
-    emit(app, "import", total, total, "Готово");
+    emit(app, "import", total, total, "@done");
     let mut f: Vec<String> = folders.into_iter().collect();
     f.sort();
     rep.folders = f;

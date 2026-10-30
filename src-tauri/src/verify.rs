@@ -66,12 +66,12 @@ pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, card: &str, lib: &str) -> Resu
             let size = fs::metadata(p).ok()?.len();
             let h = hash_file(p).ok()?;
             let d = done.fetch_add(size, Ordering::Relaxed) + size;
-            emit(app, "verify", d, card_total, "Читаю карту");
+            emit(app, "verify", d, card_total, "@verify_card");
             Some((p.to_string_lossy().to_string(), size, h))
         })
         .collect();
     if card_hashes.len() != card_files.len() {
-        return Err("Не удалось прочитать часть файлов на карте".into());
+        return Err("@err_card_read".into());
     }
 
     // 2. Library: hash what is new since the last run.
@@ -89,7 +89,7 @@ pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, card: &str, lib: &str) -> Resu
         .filter_map(|(p, m)| {
             let h = hash_file(p).ok()?;
             let d = done.fetch_add(m.len(), Ordering::Relaxed) + m.len();
-            emit(app, "verify", d, todo_total, "Читаю библиотеку");
+            emit(app, "verify", d, todo_total, "@verify_lib");
             Some((p.clone(), (*m).clone(), h))
         })
         .collect();
