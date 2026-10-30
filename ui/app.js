@@ -47,6 +47,9 @@ function kindLabel(raw) {
 // ---------- icons ----------
 
 const ICON = {
+  gallery: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  play: '<path d="M8 5.5v13l11-6.5z" fill="currentColor"/>',
+  star: '<path d="m12 3.5 2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"/>',
   import: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
   mindful: '<path d="M7 7h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z"/><path d="M9 3h6"/><path d="m9.5 14 2 2 3.5-4"/>',
   dupes: '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>',
@@ -82,6 +85,9 @@ const state = {
   blurry: { items: [], i: 0, dec: new Map(), kept: new Set() },
   mindful: null,
   review: { items: null, dir: null, folder: '*', sel: new Set() },
+  videos: null,        // videos in the library
+  stars: new Set(),    // favourite shots, library-relative paths
+  gallery: { scope: '*', filter: 'all', open: null },
   busy: false,
 };
 
@@ -360,6 +366,7 @@ async function pickLibrary() {
   try {
     const s = await invoke('set_library', { library: dir });
     setLib(s.library);
+    await loadStars();
     render();
   } catch (e) { showError(e); }
 }
@@ -380,6 +387,7 @@ function runImport() {
     state.report = rep;
     state.newFolders = rep.folders;
     state.recs = null;
+    state.videos = null;
     delete state.cardInfo[state.card];
     state.plan = await invoke('scan_import', { card: state.card, library: state.lib });
   }).then(() => {
@@ -1145,6 +1153,176 @@ function applyRSwipe() {
   return restoreSelected(back).then(() => { if (!S.items.length) go('review'); });
 }
 
+// ---------- gallery ----------
+
+const relPath = p => (p.startsWith(state.lib) ? p.slice(state.lib.length).replace(/^[\\/]/, '') : p);
+const isStar = p => state.stars.has(relPath(p));
+async function loadStars() {
+  state.stars = new Set(await invoke('get_stars', { library: state.lib }).catch(() => []));
+}
+async function toggleStar(path) {
+  try {
+    state.stars = new Set(await invoke('set_star', { library: state.lib, path, on: !isStar(path) }));
+  } catch (e) { showError(e); }
+  render();
+}
+
+// Photos come from the analysis records (one per shot, RAW-only included), videos from their own listing.
+let galleryMemo = { recs: null, videos: null, items: [] };
+function galleryItems() {
+  if (galleryMemo.recs !== state.recs || galleryMemo.videos !== state.videos) {
+    const items = (state.recs || []).map(r => ({ path: r.path, folder: r.folder, name: r.name, ts: r.ts ?? r.mtime, vertical: r.vertical, rec: r }))
+      .concat((state.videos || []).map(v => ({ path: v.path, folder: v.folder, name: v.name, ts: v.mtime, video: true })));
+    // Display order: newest day first, shots inside a day in shooting order (RAW-only shots join their day).
+    const dayOf = it => it.folder.replace(/ RAW$/, ''), start = {};
+    items.forEach(it => { const d = dayOf(it); start[d] = Math.min(start[d] ?? Infinity, it.ts); });
+    items.sort((a, b) => start[dayOf(b)] - start[dayOf(a)] || dayOf(a).localeCompare(dayOf(b)) || a.ts - b.ts || a.name.localeCompare(b.name));
+    galleryMemo = { recs: state.recs, videos: state.videos, items };
+  }
+  return galleryMemo.items;
+}
+function galleryShown() {
+  const G = state.gallery;
+  return galleryItems().filter(it =>
+    (G.scope === '*' || it.folder.replace(/ RAW$/, '') === G.scope) &&
+    (G.filter === 'all' || (G.filter === 'stars' ? isStar(it.path) : it.video)));
+}
+const fmtTs = (ts, o) => new Date(ts * 1000).toLocaleDateString(LANG, { timeZone: 'UTC', ...o });
+
+function viewGallery(main) {
+  const G = state.gallery, title = t('gallery_title');
+  if (!state.recs) return needAnalysis(main, title, '');
+  if (!state.videos) {
+    invoke('list_videos', { library: state.lib }).then(v => { state.videos = v; if (state.view === 'gallery') render(); }).catch(() => {});
+    state.videos = [];
+  }
+  const shown = galleryShown();
+  if (G.open != null) return viewViewer(main, shown);
+  const h = +ls('gsize', '180');
+  // Newest day first; shots inside a day in shooting order. RAW-only shots join their day.
+  const groups = new Map();
+  shown.forEach((it, i) => {
+    const day = it.folder.replace(/ RAW$/, '');
+    if (!groups.has(day)) groups.set(day, []);
+    groups.get(day).push([it, i]);
+  });
+  const days = [...groups];
+  const photos = shown.filter(i => !i.video).length, vids = shown.length - photos;
+  const days4sel = [...new Set(galleryItems().map(i => i.folder.replace(/ RAW$/, '')))].sort((a, b) => a.localeCompare(b, LANG, { numeric: true }));
+  main.innerHTML = `<div class="g-top"><h1>${title}</h1><span class="mut">${t('g_count', photos && shots(photos), vids && t('videos', vids))}</span>
+      <span class="grow"></span>
+      <select id="gscope"><option value="*">${t('scope_all')}</option>${days4sel.map(d => `<option value="${esc(d)}" ${d === G.scope ? 'selected' : ''}>${esc(d)}</option>`).join('')}</select>
+      <div class="seg">${['all', 'stars', 'videos'].map(f => `<button data-f="${f}" class="${G.filter === f ? 'on' : ''}">${t('g_' + f)}</button>`).join('')}</div>
+      <input type="range" id="gsize" min="110" max="340" step="10" value="${h}" title="${t('g_size')}"></div>
+    ${shown.length ? days.map(([day, list]) => `<section class="g-day">
+      <div class="g-h"><b>${esc(day)}</b><span class="mut">${fmtTs(list[0][0].ts, { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })} · ${list.length}</span></div>
+      <div class="g-row" style="--h:${h}px">${list.map(([it, i]) => {
+        const a = it.video ? 16 / 9 : it.vertical ? 2 / 3 : 3 / 2;
+        return `<div class="gt ${it.video ? 'vid' : ''}" data-i="${i}" style="flex:${a} 1 ${Math.round(a * h)}px">
+          <img data-path="${esc(it.path)}" alt="">${it.video ? `<span class="gv">${icon('play', 22)}</span>` : ''}
+          ${isStar(it.path) ? `<span class="gs">${icon('star', 14)}</span>` : ''}</div>`;
+      }).join('')}<i class="g-fill"></i></div></section>`).join('')
+    : `<div class="empty"><div class="big">${icon(G.filter === 'stars' ? 'star' : 'gallery', 54)}</div><h2>${t('g_empty')}</h2>${G.filter === 'stars' ? t('g_empty_stars') : ''}</div>`}`;
+  lazyThumbs(main, h > 220 ? 800 : 480);
+  $('#gscope', main).onchange = e => { G.scope = e.target.value; render(); };
+  main.querySelectorAll('[data-f]').forEach(b => (b.onclick = () => { G.filter = b.dataset.f; render(); }));
+  $('#gsize', main).oninput = e => {
+    lsSet('gsize', e.target.value);
+    main.querySelectorAll('.g-row').forEach(r => r.style.setProperty('--h', e.target.value + 'px'));
+    main.querySelectorAll('.gt').forEach(el => {
+      const [a] = el.style.flex.split(' ');
+      el.style.flex = `${a} 1 ${Math.round(+a * e.target.value)}px`;
+    });
+  };
+  $('#gsize', main).onchange = () => render();
+  main.querySelectorAll('.gt').forEach(el => {
+    const it = shown[+el.dataset.i];
+    el.onclick = () => (it.video ? opener.openPath(it.path) : openViewer(+el.dataset.i));
+    el.onmouseenter = () => (hoverPath = it.path);
+  });
+  if (G.scrollTo) { main.querySelector(`.gt[data-i="${G.scrollTo}"]`)?.scrollIntoView({ block: 'center' }); G.scrollTo = null; }
+}
+
+let viewerZoom = null;
+function openViewer(i) {
+  state.gallery.open = i;
+  resetZoom();
+  render();
+}
+function closeViewer() {
+  state.gallery.scrollTo = state.gallery.open;
+  state.gallery.open = null;
+  resetZoom();
+  render();
+}
+function stepViewer(d) {
+  const shown = galleryShown().filter(i => !i.video);
+  const G = state.gallery, all = galleryShown();
+  const cur = all[G.open];
+  let k = shown.indexOf(cur) + d;
+  if (k < 0 || k >= shown.length) return;
+  G.open = all.indexOf(shown[k]);
+  resetZoom();
+  render();
+}
+function viewViewer(main, shown) {
+  const G = state.gallery;
+  const it = shown[G.open];
+  if (!it || it.video) { G.open = null; return viewGallery(main); }
+  const photos = shown.filter(i => !i.video), k = photos.indexOf(it);
+  main.classList.add('fill');
+  hoverPath = it.path;
+  const star = isStar(it.path);
+  main.innerHTML = `<div class="viewer">
+    <div class="rv-head"><button class="btn" id="vClose" title="${t('v_close')}">←</button>
+      <b>${esc(it.name)}</b><span class="mut">${esc(it.folder)} · ${fmtTs(it.ts, { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+      <span class="mut">${t('of', k + 1, photos.length)}</span><span class="grow"></span>
+      <button class="btn ${star ? 'starred' : ''}" id="vStar" title="${star ? t('v_unstar') : t('v_star')}">${icon('star', 15)}</button>
+      <button class="btn" id="vReveal">${revealLabel()}</button>
+      <button class="btn" id="vOpen">${t('v_open')}</button>
+      <button class="btn" id="vReject" ${state.busy ? 'disabled' : ''}>${t('v_reject')}</button></div>
+    <div class="v-stage zoom" id="vbox">
+      <img class="zimg" data-path="${esc(it.path)}" alt="">
+      <div class="exif" id="exif" ${exifOn() ? '' : 'hidden'}></div><span class="zbadge"></span>
+      ${k > 0 ? '<button class="v-nav l" id="vPrev">‹</button>' : ''}${k < photos.length - 1 ? '<button class="v-nav r" id="vNext">›</button>' : ''}
+    </div>
+    <div class="rv-foot" style="justify-content:center"><span><kbd>←</kbd> <kbd>→</kbd> ${t('h_nav')}</span>
+      <span><kbd>${t('h_wheel')}</kbd> ${t('h_zoom')}</span><span><kbd>${t('h_click')}</kbd> / <kbd>${t('h_space')}</kbd> ${t('h_1to1')}</span>
+      <span><kbd>F</kbd> ${t('h_star')}</span><span><kbd>I</kbd> ${t('h_info')}</span><span><kbd>⌫</kbd> ${t('h_reject')}</span><span><kbd>Esc</kbd> ${t('h_close')}</span></div>
+  </div>`;
+  const box = $('#vbox', main);
+  fillThumbs(box, 1400);
+  [photos[k - 1], photos[k + 1]].forEach(n => n && thumb(n.path, 1400));
+  const apply = bindZoom([box]);
+  viewerZoom = { box, apply };
+  fillExif(it.rec || it);
+  box.onclick = e => {
+    if (e.target.closest('.v-nav')) return;
+    const img = box.querySelector('img.zimg'), r = box.getBoundingClientRect();
+    const u = clamp((e.clientX - r.left - img.offsetLeft) / img.offsetWidth, 0, 1);
+    const v = clamp((e.clientY - r.top - img.offsetTop) / img.offsetHeight, 0, 1);
+    zoom1to1(box, apply, Z.s > 1 ? null : u, Z.s > 1 ? null : v);
+  };
+  $('#vPrev', main)?.addEventListener('click', () => stepViewer(-1));
+  $('#vNext', main)?.addEventListener('click', () => stepViewer(1));
+  $('#vClose', main).onclick = closeViewer;
+  $('#vStar', main).onclick = () => toggleStar(it.path);
+  $('#vReveal', main).onclick = () => opener.revealItemInDir(it.path);
+  $('#vOpen', main).onclick = () => opener.openPath(it.path);
+  $('#vReject', main).onclick = () => rejectFromViewer(it);
+}
+function rejectFromViewer(it) {
+  const G = state.gallery;
+  const photos = galleryShown().filter(i => !i.video), k = photos.indexOf(it);
+  const next = photos[k + 1] || photos[k - 1];
+  applyMoves('rejects', [it.path])?.then(() => {
+    const all = galleryShown();
+    G.open = next ? all.findIndex(i => i.path === next.path) : null;
+    if (G.open < 0) G.open = null;
+    render();
+  });
+}
+
 // ---------- stats ----------
 
 function bars(rows, hot = () => false) {
@@ -1241,6 +1419,8 @@ function setLib(lib) {
     state.dupes.groups = [];
     state.blurry.stale = true;
     state.review.items = null;
+    state.videos = null;
+    state.gallery.open = null;
   }
   state.lib = lib;
   $('#lib').textContent = lib;
@@ -1249,7 +1429,7 @@ function setLib(lib) {
 
 // ---------- nav ----------
 
-const NAV = ['import', 'mindful', 'dupes', 'blurry', 'review', 'stats', 'verify'];
+const NAV = ['gallery', 'import', 'mindful', 'dupes', 'blurry', 'review', 'stats', 'verify'];
 function buildNav() {
   const item = v => `<button data-view="${v}">${icon(v)}<span class="lbl">${t('nav_' + v)}</span><span class="badge" id="b-${v}"></span></button>`;
   $('#nav').innerHTML = `<div class="brand" data-tauri-drag-region>Photo Sorter</div>
@@ -1282,7 +1462,7 @@ function updateNav() {
 
 // ---------- routing & keys ----------
 
-const views = { welcome: viewWelcome, import: viewImport, verify: viewVerify, dupes: viewDupes, blurry: viewBlurry,
+const views = { welcome: viewWelcome, gallery: viewGallery, import: viewImport, verify: viewVerify, dupes: viewDupes, blurry: viewBlurry,
   review: viewReview, rswipe: viewRSwipe, mindful: viewMindful, stats: viewStats, settings: viewSettings };
 function render() {
   const main = $('#main');
@@ -1306,6 +1486,19 @@ let hoverPath = null;
 addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey || ['SELECT', 'INPUT'].includes(e.target.tagName)) return;
   const k = e.key.toLowerCase();
+  if (state.view === 'gallery' && state.gallery.open != null) {
+    const it = galleryShown()[state.gallery.open];
+    if (!it) return;
+    if (k === 'escape') { e.preventDefault(); if (Z.s > 1) { resetZoom(); viewerZoom?.apply(); } else closeViewer(); }
+    else if (k === 'arrowright') { e.preventDefault(); stepViewer(1); }
+    else if (k === 'arrowleft') { e.preventDefault(); stepViewer(-1); }
+    else if (k === ' ') { e.preventDefault(); if (viewerZoom?.box.isConnected) zoom1to1(viewerZoom.box, viewerZoom.apply); }
+    else if (k === 'f' || k === 'а') toggleStar(it.path);
+    else if (k === 'i' || k === 'ш') toggleExif();
+    else if (k === 'backspace' || k === 'delete') { e.preventDefault(); if (!state.busy) rejectFromViewer(it); }
+    else if (k === '0') { resetZoom(); viewerZoom?.apply(); }
+    return;
+  }
   const swipe = { blurry: state.blurry, mindful: state.mindful, rswipe: state.rswipe }[state.view];
   if ((k === 'z' || k === 'я') && hoverPath && !e.repeat && ['dupes', 'blurry', 'review', 'mindful', 'rswipe'].includes(state.view)) {
     const z = $('#zoom');
@@ -1345,6 +1538,7 @@ addEventListener('keyup', e => {
   if (state.view === 'welcome') document.body.classList.add('welcome');
   render();
   loadReview().then(updateNav).catch(() => {});
+  loadStars();
   await pollCards();
   setInterval(pollCards, 2500);
 })();

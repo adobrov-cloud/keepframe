@@ -187,6 +187,21 @@ async fn restore_from_review(library: String, paths: Vec<String>) -> Result<usiz
 }
 
 #[tauri::command]
+async fn list_videos(library: String) -> Result<Vec<analyze::Video>, String> {
+    blocking(move || Ok(analyze::videos(&library))).await
+}
+
+#[tauri::command]
+fn get_stars(library: String) -> Vec<String> {
+    review::stars(&library)
+}
+
+#[tauri::command]
+fn set_star(library: String, path: String, on: bool) -> Result<Vec<String>, String> {
+    review::set_star(&library, &path, on)
+}
+
+#[tauri::command]
 fn undo_count(library: String) -> usize {
     review::undo_count(&library)
 }
@@ -218,7 +233,10 @@ pub fn run() {
             restore_from_review,
             card_info,
             eject_card,
-            photo_info
+            photo_info,
+            list_videos,
+            get_stars,
+            set_star
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -286,5 +304,13 @@ mod tests {
         println!("restored {back}");
         assert!(Path::new(&r.path).exists());
         assert!(crate::review::list_review(&lib).is_empty());
+
+        let vids = crate::analyze::videos(&lib);
+        println!("videos: {:?}", vids.iter().map(|v| (&v.folder, &v.name)).collect::<Vec<_>>());
+        let poster = crate::analyze::thumb(Path::new(&lib).join(".thumbcache").as_path(), Path::new(&vids[0].path), 480);
+        println!("video poster: {poster:?}");
+        let st = crate::review::set_star(&lib, &r.path, true).unwrap();
+        assert_eq!(crate::review::stars(&lib), st);
+        assert!(crate::review::set_star(&lib, &r.path, false).unwrap().is_empty());
     }
 }

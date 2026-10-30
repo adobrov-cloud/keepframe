@@ -342,3 +342,31 @@ kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 4
 .round.ok:hover { background: var(--ok-bg); }
 .zoom.loading .zbadge::after { content: ""; display: inline-block; width: 8px; height: 8px; margin-left: 6px; vertical-align: -1px;
   border: 1.5px solid #fff; border-top-color: transparent; border-radius: 50%; animation: sp .8s linear infinite; }
+
+/* ---------- gallery ---------- */
+.g-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; position: sticky; top: -4px; z-index: 5;
+  background: var(--bg); padding: 4px 0 10px; }
+.g-top h1 { margin: 0; }
+.g-top input[type=range] { width: 120px; accent-color: var(--acc); }
+.g-day { margin-bottom: 18px; }
+.g-h { display: flex; align-items: baseline; gap: 10px; margin: 0 2px 8px; }
+.g-h b { font-size: 15px; }
+.g-row { display: flex; flex-wrap: wrap; gap: 4px; }
+.g-fill { flex: 1000 1 0; height: 0; }
+.gt { position: relative; height: var(--h); max-width: calc(var(--h) * 2.4); border-radius: 4px; overflow: hidden; cursor: pointer; background: var(--photo-bg); }
+.gt img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .2s, filter .2s; }
+.gt:hover img { transform: scale(1.03); filter: brightness(1.06); }
+.gv { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; filter: drop-shadow(0 1px 4px #000a); pointer-events: none; }
+.gs { position: absolute; right: 6px; top: 6px; color: #ffd23f; filter: drop-shadow(0 1px 2px #000c); pointer-events: none; }
+.gs .ic { fill: #ffd23f; }
+
+.viewer { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.v-stage { flex: 1; position: relative; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden;
+  background: var(--photo-bg); border-radius: 10px; }
+.v-stage img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.v-nav { all: unset; position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 64px; display: grid; place-items: center;
+  font-size: 34px; color: #fff; background: #0006; border-radius: 8px; cursor: pointer; opacity: 0; transition: opacity .15s; z-index: 3; }
+.v-stage:hover .v-nav { opacity: 1; }
+.v-nav.l { left: 10px; } .v-nav.r { right: 10px; }
+.btn.starred { color: #e0a800; border-color: #e0a80066; }
+.btn.starred .ic { fill: currentColor; }

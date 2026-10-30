@@ -6,6 +6,7 @@ let listeners=[];
 RECS.forEach((r,i)=>{r.sharp_u=((i*7)%4+.5)/4;r.sharp_v=((i*3)%4+.5)/4;});
 const thumbOf=p=>{let h=0;for(const ch of p)h=(h*31+ch.charCodeAt(0))|0;return 'thumbs/'+TH[Math.abs(h)%TH.length]};
 const REVIEW=Array.from({length:40},(_, i)=>{const d=i<34?'_на проверку (дубли)':'_review (blurry)';return {path:'/lib/'+d+'/'+(i<25?'25 Oct':'10 Oct')+'/DSCF'+(1700+i)+'.JPG',kind:i<34?'дубли':'blurry',dir:d,folder:i<25?'25 Oct':'10 Oct',name:'DSCF'+(1700+i)+'.JPG',size:15e6,raws:i%2,raw_size:i%2?37e6:0}});
+const STARS=new Set();
 window.__TAURI__={core:{invoke:async(c,a)=>{console.log('invoke',c,a);await new Promise(r=>setTimeout(r,250));
  switch(c){case 'get_settings':return {library:'/Users/me/Pictures/Photos'};case 'set_library':return {library:a.library};
  case 'list_cards':return [{path:'/Volumes/Untitled',name:'Untitled'}];
@@ -16,7 +17,7 @@ window.__TAURI__={core:{invoke:async(c,a)=>{console.log('invoke',c,a);await new 
  case 'thumb':return thumbOf(a.path);
  case 'verify_card':return {card_files:2036,card_bytes:47.2e9,matched:2036,missing:[],only_in_review:767,checksum_file:'/lib/.photo-sorter/checksums/card.sha256'};
  case 'undo_count':return 2;case 'review_dir':return '/lib/'+a.folder;case 'move_to_review':return a.paths.length*2;
- case 'list_review':return REVIEW;case 'restore_from_review':return a.paths.length*2;
+ case 'list_review':return REVIEW;case 'list_videos':return [{path:'/lib/25 Oct/DSCF1799.MOV',folder:'25 Oct',name:'DSCF1799.MOV',size:2e8,mtime:1793260000}];case 'get_stars':return [...STARS];case 'set_star':{const r=a.path.replace('/Users/me/Pictures/Photos/','');a.on?STARS.add(r):STARS.delete(r);return [...STARS]}case 'restore_from_review':return a.paths.length*2;
  case 'run_import':return {copied:561,skipped:0,bytes:13.2e9,failed:[],folders:['24 Oct','25 Oct'],photos:Array.from({length:12},(_, i)=>'/lib/25 Oct/DSCF'+(1800+i)+'.JPG')};}},
  convertFileSrc:p=>p.startsWith('thumbs/')?p:thumbOf(p)},
  event:{listen:async(n,f)=>{listeners.push(f)}},dialog:{open:async()=>null},opener:{revealItemInDir:async()=>{},openPath:async()=>{}}};

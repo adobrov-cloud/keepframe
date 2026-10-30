@@ -16,7 +16,7 @@ const STRINGS = {
     units: ['КБ', 'МБ', 'ГБ'],
     decimal: ',',
 
-    nav_import: 'Импорт', nav_mindful: 'Отбор', nav_dupes: 'Дубли', nav_blurry: 'Смазанные', nav_review: 'На проверке',
+    nav_gallery: 'Галерея', nav_import: 'Импорт', nav_mindful: 'Отбор', nav_dupes: 'Дубли', nav_blurry: 'Смазанные', nav_review: 'На проверке',
     nav_stats: 'Статистика', nav_verify: 'Проверка карты', nav_settings: 'Настройки',
 
     kind_dupes: 'Дубли', kind_blurry: 'Смазанные', kind_rejects: 'Отсев',
@@ -112,6 +112,13 @@ const STRINGS = {
     rs_nothing: 'Ничего не возвращаем — всё остаётся на проверке.', return_now: n => `Вернуть сейчас (${n})`,
     back_tag: '↩ вернуть', h_select: 'выбрать для возврата', h_dbl: 'двойной клик', h_open: 'открыть в Просмотре',
 
+    gallery_title: 'Галерея',
+    g_count: (p, v) => [p, v].filter(Boolean).join(' · '),
+    videos: n => ruPlural(n, 'видео', 'видео', 'видео'),
+    g_all: 'Все', g_stars: '★ Избранное', g_videos: 'Видео', g_size: 'Размер',
+    g_empty: 'Здесь пока пусто', g_empty_stars: 'Отметьте понравившиеся кадры звёздочкой — клавиша F в просмотре.',
+    v_star: 'В избранное (F)', v_unstar: 'Убрать из избранного (F)', v_reject: 'В отсев (⌫)', v_open: 'Открыть', v_close: 'Закрыть (Esc)',
+    h_nav: 'листать', h_star: 'избранное', h_reject: 'в отсев', h_close: 'закрыть',
     stats_title: 'Статистика', stats_sub: 'Сводка по настройкам съёмки и типичным проблемам.',
     k_jpg: 'кадров JPG', k_iso: 'с ISO 3200+', k_vert: 'вертикальных', k_ends: 'на крайних фокусных зума',
     c_iso: 'ISO', c_shutter: 'Выдержка', c_aperture: 'Диафрагма', c_focal: 'Фокусное расстояние',
@@ -138,7 +145,7 @@ const STRINGS = {
     units: ['KB', 'MB', 'GB'],
     decimal: '.',
 
-    nav_import: 'Import', nav_mindful: 'Cull', nav_dupes: 'Duplicates', nav_blurry: 'Blurry', nav_review: 'For review',
+    nav_gallery: 'Gallery', nav_import: 'Import', nav_mindful: 'Cull', nav_dupes: 'Duplicates', nav_blurry: 'Blurry', nav_review: 'For review',
     nav_stats: 'Statistics', nav_verify: 'Verify card', nav_settings: 'Settings',
 
     kind_dupes: 'Duplicates', kind_blurry: 'Blurry', kind_rejects: 'Rejects',
@@ -234,6 +241,13 @@ const STRINGS = {
     rs_nothing: 'Nothing to return — everything stays in review.', return_now: n => `Return now (${n})`,
     back_tag: '↩ return', h_select: 'select to return', h_dbl: 'double-click', h_open: 'open in Preview',
 
+    gallery_title: 'Gallery',
+    g_count: (p, v) => [p, v].filter(Boolean).join(' · '),
+    videos: n => enPlural(n, 'video', 'videos'),
+    g_all: 'All', g_stars: '★ Favorites', g_videos: 'Videos', g_size: 'Size',
+    g_empty: 'Nothing here yet', g_empty_stars: 'Star the shots you like — press F in the viewer.',
+    v_star: 'Add to favorites (F)', v_unstar: 'Remove from favorites (F)', v_reject: 'Reject (⌫)', v_open: 'Open', v_close: 'Close (Esc)',
+    h_nav: 'browse', h_star: 'favorite', h_reject: 'reject', h_close: 'close',
     stats_title: 'Statistics', stats_sub: 'A summary of shooting settings and common problems.',
     k_jpg: 'JPG shots', k_iso: 'at ISO 3200+', k_vert: 'vertical', k_ends: 'at the zoom’s extremes',
     c_iso: 'ISO', c_shutter: 'Shutter speed', c_aperture: 'Aperture', c_focal: 'Focal length',

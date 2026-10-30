@@ -261,6 +261,59 @@ pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, cache_dir: &Path, lib: &str) -
     Ok(recs)
 }
 
+#[derive(Serialize)]
+pub struct Video {
+    pub path: String,
+    pub folder: String,
+    pub name: String,
+    pub size: u64,
+    pub mtime: i64,
+}
+
+pub fn videos(lib: &str) -> Vec<Video> {
+    let lib = Path::new(lib);
+    walk_media(lib, false)
+        .into_iter()
+        .filter(|p| is_video(p))
+        .filter_map(|p| {
+            let m = fs::metadata(&p).ok()?;
+            Some(Video {
+                folder: p.parent()?.strip_prefix(lib).ok()?.to_string_lossy().to_string(),
+                name: p.file_name()?.to_string_lossy().to_string(),
+                path: p.to_string_lossy().to_string(),
+                size: m.len(),
+                mtime: mtime_secs(&m),
+            })
+        })
+        .collect()
+}
+
+/// Video poster frame via Quick Look (macOS only); returns a PNG.
+fn video_thumb(dir: &Path, p: &Path, key: &str, size: u32) -> Result<PathBuf, String> {
+    if !cfg!(target_os = "macos") {
+        return Err("no video thumbnails on this platform".into());
+    }
+    let out = dir.join(format!("{key}_{size}.png"));
+    if out.exists() {
+        return Ok(out);
+    }
+    let tmp = dir.join(format!("{key}_{size}.ql"));
+    fs::create_dir_all(&tmp).map_err(err)?;
+    std::process::Command::new("qlmanage")
+        .args(["-t", "-s", &size.to_string(), "-o"])
+        .arg(&tmp)
+        .arg(p)
+        .output()
+        .map_err(err)?;
+    let made = fs::read_dir(&tmp).map_err(err)?.flatten().map(|e| e.path()).find(|q| ext(q) == "png");
+    let res = match made {
+        Some(q) => fs::rename(&q, &out).map_err(err).map(|_| out),
+        None => Err("no poster frame".into()),
+    };
+    let _ = fs::remove_dir_all(&tmp);
+    res
+}
+
 /// Cached, EXIF-rotated preview; returns its path for the asset protocol.
 pub fn thumb(cache_dir: &Path, p: &Path, size: u32) -> Result<String, String> {
     let meta = fs::metadata(p).map_err(err)?;
@@ -270,7 +323,11 @@ pub fn thumb(cache_dir: &Path, p: &Path, size: u32) -> Result<String, String> {
     h.update(mtime_secs(&meta).to_le_bytes());
     let dir = cache_dir.join("thumbs");
     fs::create_dir_all(&dir).map_err(err)?;
-    let out = dir.join(format!("{}_{size}.jpg", &hex::encode(h.finalize())[..20]));
+    let key = hex::encode(h.finalize())[..20].to_string();
+    if is_video(p) {
+        return video_thumb(&dir, p, &key, size).map(|q| q.to_string_lossy().to_string());
+    }
+    let out = dir.join(format!("{key}_{size}.jpg"));
     if !out.exists() {
         let src = jpeg_for(cache_dir, p).ok_or("no preview")?;
         let img = decode_jpeg(&src, size)?;

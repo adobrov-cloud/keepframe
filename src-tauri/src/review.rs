@@ -221,3 +221,23 @@ pub fn restore(lib: &str, paths: Vec<String>) -> Result<usize, String> {
     }
     Ok(n)
 }
+
+fn stars_file(lib: &Path) -> PathBuf {
+    state_dir(lib).join("stars.json")
+}
+
+/// Favourite shots, as library-relative paths (so they survive a trip to review and back).
+pub fn stars(lib: &str) -> Vec<String> {
+    fs::read(stars_file(Path::new(lib))).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+pub fn set_star(lib: &str, path: &str, on: bool) -> Result<Vec<String>, String> {
+    let rel = Path::new(path).strip_prefix(lib).map_err(err)?.to_string_lossy().to_string();
+    let mut v = stars(lib);
+    v.retain(|r| r != &rel);
+    if on {
+        v.push(rel);
+    }
+    fs::write(stars_file(Path::new(lib)), serde_json::to_vec(&v).map_err(err)?).map_err(err)?;
+    Ok(v)
+}
