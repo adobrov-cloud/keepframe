@@ -188,3 +188,27 @@ pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, card: &str, lib: &str, backup:
         checksum_file: sums.to_string_lossy().to_string(),
     })
 }
+
+#[derive(Serialize)]
+pub struct CopyGroup {
+    pub size: u64,
+    pub paths: Vec<String>,
+}
+
+/// Byte-identical photos and videos imported more than once (outside review folders), biggest first.
+pub fn exact_copies<R: tauri::Runtime>(app: &AppHandle<R>, lib: &str) -> Vec<CopyGroup> {
+    let lib = Path::new(lib);
+    let by = hash_tree(app, lib, lib, "hashes.json", "@hash_lib");
+    let mut groups: Vec<CopyGroup> = by
+        .into_values()
+        .map(|ps| ps.into_iter().filter(|p| is_media(p) && !in_review(p)).collect::<Vec<_>>())
+        .filter(|ps| ps.len() > 1)
+        .map(|mut ps| {
+            ps.sort();
+            CopyGroup { size: fs::metadata(&ps[0]).map(|m| m.len()).unwrap_or(0), paths: ps.iter().map(|p| p.to_string_lossy().to_string()).collect() }
+        })
+        .filter(|g| g.size > 0)
+        .collect();
+    groups.sort_by(|a, b| (b.size * b.paths.len() as u64).cmp(&(a.size * a.paths.len() as u64)));
+    groups
+}

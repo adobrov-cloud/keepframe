@@ -3,7 +3,7 @@ const RECS=[{"path": "/lib/10 Oct/DSCF1644.JPG", "folder": "10 Oct", "name": "DS
 const plan={total:2036,already:1475,bytes:13.2e9,items:Array.from({length:561},(_,i)=>({src:'/c/'+i,name:'DSCF'+i+'.JPG',size:2.3e7,date:'2026-10-25',dest_dir:i<16?'24 Oct':'25 Oct',kind:'photo'})),
  days:[{date:'2026-10-24',folder:'24 Oct',photos:8,raws:8,videos:0,bytes:5e8},{date:'2026-10-25',folder:'25 Oct',photos:88,raws:88,videos:1,bytes:6.1e9}]};
 let listeners=[];
-RECS.forEach((r,i)=>{r.sharp_u=((i*7)%4+.5)/4;r.sharp_v=((i*3)%4+.5)/4;});
+RECS.forEach((r,i)=>{r.sharp_u=((i*7)%4+.5)/4;r.sharp_v=((i*3)%4+.5)/4;if(i%5===0){const k=Math.floor(i/40)%3;const c=[[36.60,30.56],[41.01,28.98],[55.75,37.62]][k];r.gps=[c[0]+((i*13)%17-8)/400,c[1]+((i*7)%19-9)/400];}});
 // Neighbouring frame numbers get look-alike pictures (the demo images come in similar pairs), so bursts read as bursts.
 const thumbOf=p=>{const m=p.match(/(\d{3,})\.\w+$/);if(m){const n=+m[1];return 'thumbs/'+TH[(Math.floor(n/4)*2+(n%2))%TH.length]}let h=0;for(const ch of p)h=(h*31+ch.charCodeAt(0))|0;return 'thumbs/'+TH[Math.abs(h)%TH.length]};
 const REVIEW=Array.from({length:40},(_, i)=>{const d=i<34?'_на проверку (дубли)':'_review (blurry)';return {path:'/lib/'+d+'/'+(i<25?'25 Oct':'10 Oct')+'/DSCF'+(1700+i)+'.JPG',kind:i<34?'дубли':'blurry',dir:d,folder:i<25?'25 Oct':'10 Oct',name:'DSCF'+(1700+i)+'.JPG',size:15e6,raws:i%2,raw_size:i%2?37e6:0}});
@@ -18,7 +18,7 @@ window.__TAURI__={core:{invoke:async(c,a)=>{console.log('invoke',c,a);await new 
  case 'thumb':return thumbOf(a.path);
  case 'verify_card':return {card_files:2036,card_bytes:47.2e9,matched:2036,missing:[],only_in_review:767,checksum_file:'/lib/.photo-sorter/checksums/card.sha256',backup:BACKUP?{path:BACKUP,unavailable:false,matched:2036,missing:[]}:null};
  case 'undo_count':return 2;case 'review_dir':return '/lib/'+a.folder;case 'move_to_review':return a.paths.length*2;
- case 'list_review':return REVIEW;case 'list_videos':return [{path:'/lib/25 Oct/DSCF1799.MOV',folder:'25 Oct',name:'DSCF1799.MOV',size:2e8,mtime:1793260000}];case 'get_stars':return [...STARS];case 'set_stars':{for(const p of a.paths){const r=p.replace('/Users/me/Pictures/Photos/','');a.on?STARS.add(r):STARS.delete(r)}return [...STARS]}case 'restore_from_review':return a.paths.length*2;
+ case 'list_review':return REVIEW;case 'exact_copies':return [{size:1.5e7,paths:[RECS[3].path,'/lib/Copy of 10 Oct/'+RECS[3].name]},{size:3.7e7,paths:[RECS[8].path.replace('.JPG','.RAF'),'/lib/old import/'+RECS[8].name.replace('.JPG','.RAF'),'/lib/old import 2/'+RECS[8].name.replace('.JPG','.RAF')]}];case 'list_videos':return [{path:'/lib/25 Oct/DSCF1799.MOV',folder:'25 Oct',name:'DSCF1799.MOV',size:2e8,mtime:1793260000}];case 'get_stars':return [...STARS];case 'set_stars':{for(const p of a.paths){const r=p.replace('/Users/me/Pictures/Photos/','');a.on?STARS.add(r):STARS.delete(r)}return [...STARS]}case 'restore_from_review':return a.paths.length*2;
  case 'run_import':return {copied:561,skipped:0,bytes:13.2e9,failed:[],backup:BACKUP,backup_copied:561,backup_failed:[],backup_unavailable:false,folders:['24 Oct','25 Oct'],photos:Array.from({length:12},(_, i)=>'/lib/25 Oct/DSCF'+(1800+i)+'.JPG')};}},
  convertFileSrc:p=>p.startsWith('thumbs/')?p:thumbOf(p)},
  event:{listen:async(n,f)=>{listeners.push(f)}},dialog:{open:async()=>null},opener:{revealItemInDir:async()=>{},openPath:async()=>{}}};

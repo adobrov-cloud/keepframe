@@ -51,6 +51,7 @@ function kindLabel(raw) {
 // ---------- icons ----------
 
 const ICON = {
+  map: '<path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.4"/>',
   gallery: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
   play: '<path d="M8 5.5v13l11-6.5z" fill="currentColor"/>',
   star: '<path d="m12 3.5 2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"/>',
@@ -630,7 +631,47 @@ function dupesRejected() {
 }
 
 let dupesApply = null;
+const dupesModeSeg = () =>
+  `<div class="seg">${['similar', 'exact'].map(m => `<button data-dm="${m}" class="${(state.dupesMode || 'similar') === m ? 'on' : ''}">${t('d_' + m)}</button>`).join('')}</div>`;
+function bindDupesMode(main) {
+  main.querySelectorAll('[data-dm]').forEach(b => (b.onclick = () => { state.dupesMode = b.dataset.dm; render(); }));
+}
+
+// Byte-identical files imported more than once: keep one, set the rest aside.
+function viewExact(main) {
+  const E = (state.exact ||= { groups: null, keep: {} });
+  const head = `<h1>${t('dupes_title')}</h1><div class="row" style="margin-bottom:14px">${dupesModeSeg()}</div><p class="sub">${t('exact_sub')}</p>`;
+  if (!E.groups) {
+    main.innerHTML = head + `<div class="empty"><div class="big">${icon('dupes', 54)}</div>
+      <button class="btn primary" id="findExact" ${state.busy ? 'disabled' : ''}>${t('find_exact')}</button></div>`;
+    bindDupesMode(main);
+    $('#findExact', main).onclick = () => task('hash', t('task_hash'), async () => {
+      E.groups = await invoke('exact_copies', { library: state.lib });
+      E.keep = {};
+    });
+    return;
+  }
+  if (!E.groups.length) {
+    main.innerHTML = head + `<div class="empty"><div class="big">${icon('check', 54)}</div><h2>${t('exact_none')}</h2></div>`;
+    return bindDupesMode(main);
+  }
+  const keepOf = gi => E.keep[gi] ?? E.groups[gi].paths[0];
+  const out = E.groups.flatMap((g, gi) => g.paths.filter(p => p !== keepOf(gi)));
+  const free = E.groups.reduce((t, g) => t + g.size * (g.paths.length - 1), 0);
+  main.innerHTML = head + `<div class="row" style="margin-bottom:14px"><span class="mut">${t('exact_free', gb(free))}</span><span class="grow"></span>
+      <button class="btn primary" id="xApply" ${out.length && !state.busy ? '' : 'disabled'}>${t('move_n', files(out.length))}</button></div>
+    ${E.groups.map((g, gi) => `<div class="panel xg"><div class="mut small" style="margin-bottom:8px">${t('exact_group', files(g.paths.length), gb(g.size))}</div>
+      <div class="xrow">${g.paths.map(p => `<div class="xc ${p === keepOf(gi) ? 'keep' : ''}" data-g="${gi}" data-p="${esc(p)}">
+        <img data-path="${esc(p)}" alt=""><span class="tag">${p === keepOf(gi) ? t('keep_tag') : t('out_tag')}</span>
+        <span class="fname">${esc(relPath(p))}</span></div>`).join('')}</div></div>`).join('')}`;
+  bindDupesMode(main);
+  lazyThumbs(main, 320);
+  main.querySelectorAll('.xc').forEach(el => (el.onclick = () => { E.keep[el.dataset.g] = el.dataset.p; render(); }));
+  $('#xApply', main).onclick = () => applyMoves('dupes', out)?.then(() => { state.exact = null; render(); });
+}
+
 function viewDupes(main) {
+  if (state.dupesMode === 'exact') return viewExact(main);
   const title = t('dupes_title'), sub = t('dupes_sub');
   if (!state.recs) return needAnalysis(main, title, sub);
   const D = state.dupes;
@@ -641,9 +682,10 @@ function viewDupes(main) {
     D.keep = {};
   }
   if (!D.groups.length) {
-    main.innerHTML = `<h1>${title}</h1><div class="row" style="margin-bottom:20px">${scopeSelect('scope', state.scope.dupes)}</div>
+    main.innerHTML = `<h1>${title}</h1><div class="row" style="margin-bottom:20px">${dupesModeSeg()}${scopeSelect('scope', state.scope.dupes)}</div>
       <div class="empty"><div class="big">${icon('check', 54)}</div><h2>${t('no_dupes')}</h2></div>`;
     $('#scope', main).onchange = e => { state.scope.dupes = e.target.value; render(); };
+    bindDupesMode(main);
     return;
   }
   main.classList.add('fill');
@@ -653,6 +695,7 @@ function viewDupes(main) {
   const rej = dupesRejected().length;
   main.innerHTML = `
     <div class="rv-head">
+      ${dupesModeSeg()}
       ${scopeSelect('scope', state.scope.dupes)}
       <b>${t('series_n', D.i + 1, D.groups.length)}</b>
       <span class="mut">${esc(g.folder)} · ${shots(g.items.length)}</span>
@@ -684,6 +727,7 @@ function viewDupes(main) {
   strip.querySelector('.cur')?.scrollIntoView({ inline: 'center', block: 'nearest' });
   strip.querySelectorAll('.sitem').forEach(el => (el.onclick = () => { D.i = +el.dataset.i; resetZoom(); render(); }));
   dupesApply = bindZoom([...stage.querySelectorAll('.zoom')]);
+  bindDupesMode(main);
   $('#scope', main).onchange = e => { state.scope.dupes = e.target.value; render(); };
   $('#prev', main).onclick = () => stepDupes(-1);
   $('#next', main).onclick = () => stepDupes(1);
@@ -806,6 +850,8 @@ function swipeStage(S, info) {
         <span class="stamp s-out">${S.outLabel}</span><span class="stamp s-keep">${S.keepLabel || t('stamp_keep')}</span>
         <div class="exif" id="exif" ${exifOn() ? '' : 'hidden'}></div>
         <span class="zbadge"></span>
+        ${metaOf(r.path).rating || metaOf(r.path).label ? `<span class="tmeta">${stars5(metaOf(r.path).rating)}${metaOf(r.path).label
+          ? `<i style="background:${LABELS[metaOf(r.path).label]}"></i>` : ''}</span>` : ''}
         <span class="fname">${esc(r.folder)} · ${esc(r.name)}${info ? ' · ' + info(r) : ''}</span>
       </div>
       ${loupe ? `<div class="loupe" id="loupe" title="${t('loupe')}" hidden><img alt=""><span>${t('loupe')}</span></div>` : ''}
@@ -817,7 +863,8 @@ function swipeStage(S, info) {
     </div>
     <div class="rv-foot" style="justify-content:center"><span><kbd>←</kbd> ${S.outHint}</span><span><kbd>→</kbd> ${S.keepHint || t('h_keep')}</span>
       <span><kbd>⌫</kbd> ${t('h_prev')}</span><span><kbd>${t('h_wheel')}</kbd> ${t('h_zoom')}</span>
-      <span><kbd>${t('h_click')}</kbd> / <kbd>${t('h_space')}</kbd> ${t('h_1to1')}</span><span><kbd>I</kbd> ${t('h_info')}</span><span>${t('h_drag')}</span></div>`;
+      <span><kbd>${t('h_click')}</kbd> / <kbd>${t('h_space')}</kbd> ${t('h_1to1')}</span><span><kbd>1</kbd>–<kbd>5</kbd> ${t('h_rate')}</span>
+      <span><kbd>I</kbd> ${t('h_info')}</span><span>${t('h_drag')}</span></div>`;
 }
 function swipeBind(main, S) {
   const r = S.items[S.i], card = $('#tcard', main);
@@ -1312,16 +1359,67 @@ function galleryItems() {
   }
   return galleryMemo.items;
 }
+// Stacks (optional): a burst shows as its sharpest shot with a count; clicking the count expands it.
+let stackMemo = { recs: null, of: new Map() };
+function stackOf(path) {
+  if (stackMemo.recs !== state.recs) {
+    const of = new Map();
+    findBursts(state.recs || []).forEach(g => g.items.forEach(r => of.set(r.path, g)));
+    stackMemo = { recs: state.recs, of };
+  }
+  return stackMemo.of.get(path);
+}
+const stacksOn = () => ls('stacks') === '1';
+
 function galleryShown() {
   const G = state.gallery;
-  return galleryItems().filter(it =>
-    (G.scope === '*' || it.folder.replace(/ RAW$/, '') === G.scope) &&
-    (G.filter === 'all' || (G.filter === 'stars' ? isStar(it.path) : it.video)) &&
-    (!G.rating || (metaOf(it.path).rating || 0) >= G.rating) &&
-    (!G.label || (G.label === 'none' ? !metaOf(it.path).label : metaOf(it.path).label === G.label)));
+  G.expanded ||= new Set();
+  return galleryItems().filter(it => {
+    if (!((G.scope === '*' || it.folder.replace(/ RAW$/, '') === G.scope) &&
+      (G.filter === 'all' || (G.filter === 'stars' ? isStar(it.path) : it.video)) &&
+      (!G.rating || (metaOf(it.path).rating || 0) >= G.rating) &&
+      (!G.label || (G.label === 'none' ? !metaOf(it.path).label : metaOf(it.path).label === G.label)))) return false;
+    if (!stacksOn() || it.video) return true;
+    const g = stackOf(it.path);
+    return !g || g.best === it.path || G.expanded.has(g.key);
+  });
 }
 const fmtTs = (ts, o) => new Date(ts * 1000).toLocaleDateString(LANG, { timeZone: 'UTC', ...o });
 
+// Justified layout computed up front; only the tiles near the viewport exist in the DOM, so the gallery stays
+// fast with tens of thousands of shots.
+const G_GAP = 4, G_HEAD = 44, G_DAYGAP = 18;
+function galleryLayout(shown, width, h) {
+  const out = [], aspect = it => (it.video ? 16 / 9 : it.vertical ? 2 / 3 : 3 / 2);
+  let y = 0, i = 0;
+  while (i < shown.length) {
+    const day = shown[i].folder.replace(/ RAW$/, '');
+    let j = i;
+    while (j < shown.length && shown[j].folder.replace(/ RAW$/, '') === day) j++;
+    out.push({ head: true, day, n: j - i, ts: shown[i].ts, y, h: G_HEAD });
+    y += G_HEAD;
+    let row = [];
+    const flush = last => {
+      const sum = row.reduce((t, k) => t + aspect(shown[k]), 0);
+      const rh = last ? Math.min(h, (width - G_GAP * (row.length - 1)) / sum) : (width - G_GAP * (row.length - 1)) / sum;
+      let x = 0;
+      row.forEach(k => { const w = aspect(shown[k]) * rh; out.push({ i: k, x, y, w, h: rh }); x += w + G_GAP; });
+      y += rh + G_GAP;
+      row = [];
+    };
+    for (let k = i; k < j; k++) {
+      row.push(k);
+      const sum = row.reduce((t, q) => t + aspect(shown[q]), 0);
+      if (sum * h + G_GAP * (row.length - 1) >= width) flush(false);
+    }
+    if (row.length) flush(true);
+    y += G_DAYGAP;
+    i = j;
+  }
+  return { cells: out, height: y };
+}
+
+let galleryView = null;
 function viewGallery(main) {
   const G = state.gallery, title = t('gallery_title');
   if (!state.recs) return needAnalysis(main, title, '');
@@ -1332,55 +1430,62 @@ function viewGallery(main) {
   const shown = galleryShown();
   if (G.open != null) return viewViewer(main, shown);
   const h = +ls('gsize', '180');
-  // Newest day first; shots inside a day in shooting order. RAW-only shots join their day.
-  const groups = new Map();
-  shown.forEach((it, i) => {
-    const day = it.folder.replace(/ RAW$/, '');
-    if (!groups.has(day)) groups.set(day, []);
-    groups.get(day).push([it, i]);
-  });
-  const days = [...groups];
   const photos = shown.filter(i => !i.video).length, vids = shown.length - photos;
   const days4sel = [...new Set(galleryItems().map(i => i.folder.replace(/ RAW$/, '')))].sort((a, b) => a.localeCompare(b, LANG, { numeric: true }));
+  const keepScroll = galleryView?.main === main && state.view === 'gallery' ? main.scrollTop : 0;
   main.innerHTML = `<div class="g-top"><h1>${title}</h1><span class="mut">${t('g_count', photos && shots(photos), vids && t('videos', vids))}</span>
       <span class="grow"></span>
       <select id="gscope"><option value="*">${t('scope_all')}</option>${days4sel.map(d => `<option value="${esc(d)}" ${d === G.scope ? 'selected' : ''}>${esc(d)}</option>`).join('')}</select>
       <div class="seg">${['all', 'stars', 'videos'].map(f => `<button data-f="${f}" class="${G.filter === f ? 'on' : ''}">${t('g_' + f)}</button>`).join('')}</div>
       <select id="grate"><option value="0">${t('rating_any')}</option>${[1, 2, 3, 4, 5].map(n => `<option value="${n}" ${G.rating === n ? 'selected' : ''}>${t('rating_min', n)}</option>`).join('')}</select>
       <select id="glabel"><option value="">${t('label_any')}</option>${Object.keys(LABELS).map(n => `<option value="${n}" ${G.label === n ? 'selected' : ''}>${t('label_' + n)}</option>`).join('')}<option value="none" ${G.label === 'none' ? 'selected' : ''}>${t('label_none')}</option></select>
+      <label class="tgl" title="${t('stacks_hint')}"><input type="checkbox" id="gstacks" ${stacksOn() ? 'checked' : ''}> ${t('stacks')}</label>
       <input type="range" id="gsize" min="110" max="340" step="10" value="${h}" title="${t('g_size')}">
       <button class="btn ${G.selecting ? 'on' : ''}" id="gselect">${t('g_select')}</button></div>
-    ${shown.length ? days.map(([day, list]) => `<section class="g-day">
-      <div class="g-h"><b>${esc(day)}</b><span class="mut">${fmtTs(list[0][0].ts, { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })} · ${list.length}</span></div>
-      <div class="g-row" style="--h:${h}px">${list.map(([it, i]) => {
-        const a = it.video ? 16 / 9 : it.vertical ? 2 / 3 : 3 / 2;
-        return `<div class="gt ${it.video ? 'vid' : ''} ${G.sel.has(it.path) ? 'sel' : ''}" data-i="${i}" style="flex:${a} 1 ${Math.round(a * h)}px">
-          <span class="gck">${icon('check', 14)}</span>
-          <img data-path="${esc(it.path)}" alt="">${it.video ? `<span class="gv">${icon('play', 22)}</span>` : ''}
-          ${isStar(it.path) ? `<span class="gs">${icon('star', 14)}</span>` : ''}
-          ${metaOf(it.path).rating ? `<span class="gr">${stars5(metaOf(it.path).rating)}</span>` : ''}
-          ${metaOf(it.path).label ? `<span class="gl" style="background:${LABELS[metaOf(it.path).label]}"></span>` : ''}</div>`;
-      }).join('')}<i class="g-fill"></i></div></section>`).join('') + selBar()
-    : `<div class="empty"><div class="big">${icon(G.filter === 'stars' ? 'star' : 'gallery', 54)}</div><h2>${t('g_empty')}</h2>${G.filter === 'stars' ? t('g_empty_stars') : ''}</div>`}`;
-  lazyThumbs(main, h > 220 ? 800 : 480);
+    ${shown.length ? '<div class="g-canvas" id="gcanvas"></div>' + selBar()
+      : `<div class="empty"><div class="big">${icon(G.filter === 'stars' ? 'star' : 'gallery', 54)}</div><h2>${t('g_empty')}</h2>${G.filter === 'stars' ? t('g_empty_stars') : ''}</div>`}`;
   $('#gscope', main).onchange = e => { G.scope = e.target.value; render(); };
   $('#grate', main).onchange = e => { G.rating = +e.target.value; render(); };
   $('#glabel', main).onchange = e => { G.label = e.target.value; render(); };
+  $('#gstacks', main).onchange = e => { lsSet('stacks', e.target.checked ? '1' : '0'); render(); };
   main.querySelectorAll('[data-f]').forEach(b => (b.onclick = () => { G.filter = b.dataset.f; render(); }));
-  $('#gsize', main).oninput = e => {
-    lsSet('gsize', e.target.value);
-    main.querySelectorAll('.g-row').forEach(r => r.style.setProperty('--h', e.target.value + 'px'));
-    main.querySelectorAll('.gt').forEach(el => {
-      const [a] = el.style.flex.split(' ');
-      el.style.flex = `${a} 1 ${Math.round(+a * e.target.value)}px`;
-    });
-  };
-  $('#gsize', main).onchange = () => render();
   main.classList.toggle('selecting', G.selecting || G.sel.size > 0);
   $('#gselect', main).onclick = () => { G.selecting = !G.selecting; if (!G.selecting) G.sel.clear(); render(); };
-  main.querySelectorAll('.gt').forEach(el => {
-    const i = +el.dataset.i, it = shown[i];
+  bindSelBar(main, shown);
+  const canvas = $('#gcanvas', main);
+  if (!canvas) { galleryView = null; return; }
+
+  const V = (galleryView = { main, canvas, shown, h, els: new Map(), layout: null });
+  const relayout = () => {
+    V.layout = galleryLayout(shown, canvas.clientWidth, V.h);
+    canvas.style.height = V.layout.height + 'px';
+    V.els.forEach(el => el.remove());
+    V.els.clear();
+    paint();
+  };
+  const tileSize = () => (V.h > 220 ? 800 : 480);
+  const makeTile = c => {
+    if (c.head) {
+      const el = document.createElement('div');
+      el.className = 'g-h';
+      el.innerHTML = `<b>${esc(c.day)}</b><span class="mut">${fmtTs(c.ts, { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })} · ${c.n}</span>`;
+      return el;
+    }
+    const it = shown[c.i], m = metaOf(it.path), g = stacksOn() && !it.video ? stackOf(it.path) : null;
+    const el = document.createElement('div');
+    el.className = `gt ${it.video ? 'vid' : ''} ${G.sel.has(it.path) ? 'sel' : ''}`;
+    el.dataset.i = c.i;
+    el.innerHTML = `<span class="gck">${icon('check', 14)}</span><img data-path="${esc(it.path)}" alt="">
+      ${it.video ? `<span class="gv">${icon('play', 22)}</span>` : ''}
+      ${isStar(it.path) ? `<span class="gs">${icon('star', 14)}</span>` : ''}
+      ${m.rating ? `<span class="gr">${stars5(m.rating)}</span>` : ''}
+      ${m.label ? `<span class="gl" style="background:${LABELS[m.label]}"></span>` : ''}
+      ${g && g.best === it.path ? `<button class="gstack ${G.expanded.has(g.key) ? 'open' : ''}" data-k="${esc(g.key)}">×${g.items.length}</button>` : ''}`;
+    setThumb(el.querySelector('img'), tileSize());
     el.onclick = e => {
+      const sb = e.target.closest('.gstack');
+      if (sb) { G.expanded.has(sb.dataset.k) ? G.expanded.delete(sb.dataset.k) : G.expanded.add(sb.dataset.k); return render(); }
+      const i = c.i;
       // Shift picks a range from the last clicked tile, ⌘/Ctrl toggles one; in selection mode a plain click toggles too.
       if (e.shiftKey && G.anchor != null) {
         const [a, b] = [Math.min(G.anchor, i), Math.max(G.anchor, i)];
@@ -1395,9 +1500,37 @@ function viewGallery(main) {
       refreshSel(main, shown);
     };
     el.onmouseenter = () => (hoverPath = it.path);
-  });
-  bindSelBar(main, shown);
-  if (G.scrollTo) { main.querySelector(`.gt[data-i="${G.scrollTo}"]`)?.scrollIntoView({ block: 'center' }); G.scrollTo = null; }
+    return el;
+  };
+  const paint = () => {
+    if (!V.layout || !canvas.isConnected) return;
+    const top = main.scrollTop - canvas.offsetTop - 900, bottom = main.scrollTop - canvas.offsetTop + main.clientHeight + 900;
+    const want = new Set();
+    V.layout.cells.forEach((c, k) => {
+      if (c.y + c.h < top || c.y > bottom) return;
+      want.add(k);
+      if (V.els.has(k)) return;
+      const el = makeTile(c);
+      Object.assign(el.style, { position: 'absolute', top: c.y + 'px', left: (c.x || 0) + 'px', width: c.head ? '100%' : c.w + 'px', height: c.h + 'px' });
+      canvas.appendChild(el);
+      V.els.set(k, el);
+    });
+    V.els.forEach((el, k) => { if (!want.has(k)) { el.remove(); V.els.delete(k); } });
+  };
+  V.paint = paint;
+  let raf = 0;
+  main.onscroll = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; paint(); }); };
+  V.ro?.disconnect();
+  V.ro = new ResizeObserver(() => { if (canvas.isConnected) relayout(); });
+  V.ro.observe(canvas);
+  relayout();
+  $('#gsize', main).oninput = e => { lsSet('gsize', e.target.value); V.h = +e.target.value; relayout(); };
+  if (G.scrollTo != null) {
+    const c = V.layout.cells.find(c => c.i === G.scrollTo);
+    if (c) main.scrollTop = canvas.offsetTop + c.y - main.clientHeight / 2 + c.h / 2;
+    G.scrollTo = null;
+  } else if (keepScroll) main.scrollTop = keepScroll;
+  paint();
 }
 
 // Selection bar; updated in place so ticking tiles in a big library doesn't re-render the grid.
@@ -1428,7 +1561,7 @@ function bindSelBar(main, shown) {
 }
 function refreshSel(main, shown) {
   const G = state.gallery;
-  main.querySelectorAll('.gt').forEach(el => el.classList.toggle('sel', G.sel.has(shown[+el.dataset.i].path)));
+  main.querySelectorAll('.gt').forEach(el => el.classList.toggle('sel', G.sel.has(shown[+el.dataset.i]?.path)));
   main.classList.toggle('selecting', G.selecting || G.sel.size > 0);
   $('#selbar', main)?.remove();
   main.insertAdjacentHTML('beforeend', selBar());
@@ -1539,6 +1672,142 @@ function rejectFromViewer(it) {
   });
 }
 
+// ---------- map ----------
+// A small slippy map over OpenStreetMap tiles (fetched only while this screen is open), with clustered pins.
+
+const TILE = 256;
+const project = ([lat, lon], z) => {
+  const n = TILE * 2 ** z, s = Math.sin(lat * Math.PI / 180);
+  return [(lon + 180) / 360 * n, (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * n];
+};
+let mapView = null;
+function viewMap(main) {
+  const title = t('nav_map');
+  if (!state.recs) return needAnalysis(main, title, t('map_sub'));
+  const pts = galleryItems().filter(it => it.rec?.gps);
+  if (!pts.length) {
+    main.innerHTML = `<h1>${title}</h1><p class="sub">${t('map_sub')}</p>
+      <div class="empty"><div class="big">${icon('map', 54)}</div><h2>${t('map_none')}</h2>${t('map_none_sub')}</div>`;
+    return;
+  }
+  main.classList.add('fill');
+  main.innerHTML = `<div class="rv-head"><b>${title}</b><span class="mut">${t('map_count', shots(pts.length))}</span><span class="grow"></span>
+      <span class="mut small">${t('map_sub')}</span></div>
+    <div class="map" id="map"><div class="map-tiles"></div><div class="map-pins"></div>
+      <div class="map-zoom"><button id="zin">+</button><button id="zout">−</button></div>
+      <div class="map-attr">© <a href="https://www.openstreetmap.org/copyright" id="osm">OpenStreetMap</a></div></div>`;
+  const box = $('#map', main), tiles = $('.map-tiles', box), pins = $('.map-pins', box);
+  $('#osm', box).onclick = e => { e.preventDefault(); opener.openUrl?.('https://www.openstreetmap.org/copyright'); };
+  const M = (mapView ||= {});
+  if (!M.z) {
+    const lats = pts.map(p => p.rec.gps[0]), lons = pts.map(p => p.rec.gps[1]);
+    const bb = [[Math.max(...lats), Math.min(...lons)], [Math.min(...lats), Math.max(...lons)]];
+    const W = box.clientWidth - 80, H = box.clientHeight - 80;
+    let z = 16;
+    while (z > 1) {
+      const [a, b] = [project(bb[0], z), project(bb[1], z)];
+      if (b[0] - a[0] <= W && b[1] - a[1] <= H) break;
+      z--;
+    }
+    const [a, b] = [project(bb[0], z), project(bb[1], z)];
+    Object.assign(M, { z, cx: (a[0] + b[0]) / 2, cy: (a[1] + b[1]) / 2 });
+  }
+  const draw = () => {
+    const W = box.clientWidth, H = box.clientHeight, n = 2 ** M.z, x0 = M.cx - W / 2, y0 = M.cy - H / 2;
+    let html = '';
+    for (let tx = Math.floor(x0 / TILE); tx <= Math.floor((x0 + W) / TILE); tx++)
+      for (let ty = Math.max(0, Math.floor(y0 / TILE)); ty <= Math.min(n - 1, Math.floor((y0 + H) / TILE)); ty++)
+        html += `<img src="https://tile.openstreetmap.org/${M.z}/${((tx % n) + n) % n}/${ty}.png" style="left:${tx * TILE - x0}px;top:${ty * TILE - y0}px" alt="">`;
+    tiles.innerHTML = html;
+    // Cluster pins on a 56 px grid.
+    const cells = new Map();
+    pts.forEach(p => {
+      const [x, y] = project(p.rec.gps, M.z), sx = x - x0, sy = y - y0;
+      if (sx < -60 || sy < -60 || sx > W + 60 || sy > H + 60) return;
+      const k = Math.floor(sx / 56) + ':' + Math.floor(sy / 56);
+      const c = cells.get(k) || { x: 0, y: 0, items: [] };
+      c.x += sx; c.y += sy; c.items.push(p);
+      cells.set(k, c);
+    });
+    const list = [...cells.values()];
+    pins.innerHTML = list.map((c, ci) => {
+      const x = c.x / c.items.length, y = c.y / c.items.length;
+      return `<div class="pin" data-c="${ci}" style="left:${x}px;top:${y}px"><img data-path="${esc(c.items[0].path)}" alt="">
+        ${c.items.length > 1 ? `<span>${c.items.length}</span>` : ''}</div>`;
+    }).join('');
+    fillThumbs(pins, 160);
+    pins.querySelectorAll('.pin').forEach(el => (el.onclick = e => {
+      e.stopPropagation();
+      const c = list[+el.dataset.c];
+      if (c.items.length > 1 && M.z < 18) zoomAt(Math.min(18, M.z + 2) - M.z, c.x / c.items.length, c.y / c.items.length);
+      else openInGallery(c.items[0].path);
+    }));
+  };
+  const zoomAt = (dz, mx, my) => {
+    const z = Math.max(1, Math.min(18, M.z + dz)), f = 2 ** (z - M.z), W = box.clientWidth, H = box.clientHeight;
+    M.cx = (M.cx + (mx - W / 2)) * f - (mx - W / 2);
+    M.cy = (M.cy + (my - H / 2)) * f - (my - H / 2);
+    M.z = z;
+    draw();
+  };
+  let drag = null, acc = 0;
+  box.onpointerdown = e => { if (e.target.closest('.pin, .map-zoom, a')) return; drag = [e.clientX, e.clientY]; box.setPointerCapture(e.pointerId); };
+  box.onpointermove = e => {
+    if (!drag) return;
+    M.cx -= e.clientX - drag[0]; M.cy -= e.clientY - drag[1];
+    drag = [e.clientX, e.clientY];
+    draw();
+  };
+  box.onpointerup = box.onpointercancel = () => (drag = null);
+  box.addEventListener('wheel', e => {
+    e.preventDefault();
+    acc += e.deltaY;
+    if (Math.abs(acc) < 80) return;
+    const r = box.getBoundingClientRect();
+    zoomAt(acc < 0 ? 1 : -1, e.clientX - r.left, e.clientY - r.top);
+    acc = 0;
+  }, { passive: false });
+  $('#zin', box).onclick = () => zoomAt(1, box.clientWidth / 2, box.clientHeight / 2);
+  $('#zout', box).onclick = () => zoomAt(-1, box.clientWidth / 2, box.clientHeight / 2);
+  new ResizeObserver(() => box.isConnected && draw()).observe(box);
+  draw();
+}
+// Open one shot in the gallery viewer, clearing filters that might hide it.
+function openInGallery(path) {
+  const G = state.gallery;
+  Object.assign(G, { scope: '*', filter: 'all', rating: 0, label: '' });
+  G.expanded ||= new Set();
+  const g = stackOf(path);
+  if (g) G.expanded.add(g.key);
+  const i = galleryShown().findIndex(x => x.path === path);
+  G.open = i < 0 ? null : i;
+  go('gallery');
+}
+
+// ---------- updates ----------
+
+const UPD = window.__TAURI__?.updater, PROC = window.__TAURI__?.process;
+const autoUpd = () => ls('autoupd', '1') === '1';
+function installUpdate(u) {
+  return task('update', t('upd_downloading'), async () => {
+    await u.downloadAndInstall();
+    await PROC?.relaunch();
+  });
+}
+async function checkUpdate(silent) {
+  if (!UPD) { if (silent) return null; throw t('upd_fail'); }
+  try {
+    const u = await UPD.check();
+    if (u && silent) {
+      const el = toast(`${t('upd_avail', esc(u.version))} <button class="btn primary" id="tUpd">${t('upd_install')}</button>`, 30000);
+      $('#tUpd', el).onclick = () => installUpdate(u);
+    }
+    return u;
+  } catch (e) {
+    if (!silent) throw e;
+  }
+}
+
 // ---------- stats ----------
 
 function bars(rows, hot = () => false) {
@@ -1621,6 +1890,9 @@ async function viewSettings(main) {
         <button class="btn" id="bPick">${t('s_backup_pick')}</button>
         ${state.backup ? `<button class="btn" id="bOff">${t('s_backup_off')}</button>` : ''}</div>
       ${state.backup ? `<div class="row" style="margin-top:10px"><button class="btn" id="bSync" ${state.busy ? 'disabled' : ''}>${t('s_backup_sync')}</button></div>` : ''}</div>
+    <div class="panel"><h3>${t('upd_title')}</h3><div class="row"><span class="mut" id="uVer"></span><span class="grow"></span>
+      <label class="tgl"><input type="checkbox" id="uAuto" ${autoUpd() ? 'checked' : ''}> ${t('upd_auto')}</label>
+      <button class="btn" id="uCheck" ${state.busy ? 'disabled' : ''}>${t('upd_check')}</button></div><div class="small" id="uRes" style="margin-top:8px"></div></div>
     <div class="panel"><h3>${t('s_moves')}</h3>
       <div class="mut" style="margin-bottom:10px">${t('s_moves_sub', t('actions', undoN))}</div>
       <button class="btn" id="undo" ${undoN && !state.busy ? '' : 'disabled'}>${t('s_undo')}</button></div>
@@ -1640,6 +1912,17 @@ async function viewSettings(main) {
     if (dir) setB(dir);
   };
   $('#bOff', main)?.addEventListener('click', () => setB(null));
+  window.__TAURI__.app?.getVersion?.().then(v => { const el = $('#uVer', main); if (el) el.textContent = t('upd_version', v); }).catch(() => {});
+  $('#uAuto', main).onchange = e => lsSet('autoupd', e.target.checked ? '1' : '0');
+  $('#uCheck', main).onclick = async () => {
+    const res = $('#uRes', main);
+    res.innerHTML = '<span class="spin"></span>';
+    try {
+      const u = await checkUpdate(false);
+      res.innerHTML = u ? `${t('upd_avail', esc(u.version))} <button class="btn primary" id="uGo">${t('upd_install')}</button>` : t('upd_none');
+      if (u) $('#uGo', res).onclick = () => installUpdate(u);
+    } catch (e) { res.textContent = `${t('upd_fail')}: ${msg(e)}`; }
+  };
   $('#bSync', main)?.addEventListener('click', () => task('backup', t('task_backup'), async () => {
     const r = await invoke('backup_sync', { library: state.lib });
     toast(t('sync_done', files(r.copied), gb(r.bytes)) + (r.failed.length ? ` · ${t('rep_backup_failed', files(r.failed.length))}` : ''), 9000);
@@ -1664,7 +1947,7 @@ function setLib(lib) {
 
 // ---------- nav ----------
 
-const NAV = ['gallery', 'import', 'mindful', 'dupes', 'blurry', 'review', 'stats', 'verify'];
+const NAV = ['gallery', 'map', 'import', 'mindful', 'dupes', 'blurry', 'review', 'stats', 'verify'];
 function buildNav() {
   const item = v => `<button data-view="${v}">${icon(v)}<span class="lbl">${t('nav_' + v)}</span><span class="badge" id="b-${v}"></span></button>`;
   $('#nav').innerHTML = `<div class="brand" data-tauri-drag-region>${logoMark(20)}<span>Keepframe</span></div>
@@ -1697,11 +1980,12 @@ function updateNav() {
 
 // ---------- routing & keys ----------
 
-const views = { welcome: viewWelcome, gallery: viewGallery, import: viewImport, verify: viewVerify, dupes: viewDupes, blurry: viewBlurry,
+const views = { welcome: viewWelcome, gallery: viewGallery, map: viewMap, import: viewImport, verify: viewVerify, dupes: viewDupes, blurry: viewBlurry,
   review: viewReview, rswipe: viewRSwipe, mindful: viewMindful, stats: viewStats, settings: viewSettings };
 function render() {
   const main = $('#main');
   main.classList.remove('fill');
+  main.onscroll = null;
   views[state.view](main);
   updateNav();
 }
@@ -1758,6 +2042,7 @@ addEventListener('keydown', e => {
     else if (k === 'backspace' || k === 'arrowup') { e.preventDefault(); swipeBack(swipe); }
     else if (k === ' ') { e.preventDefault(); if (swipeZoom?.card.isConnected) zoom1to1(swipeZoom.card, swipeZoom.apply); }
     else if (k === 'i') toggleExif();
+    else if (/^[0-9]$/.test(k)) rateKey(k, [swipe.items[swipe.i].path]);
   } else if (swipe?.items?.length && k === 'backspace') {
     e.preventDefault();
     swipeBack(swipe);
@@ -1782,6 +2067,7 @@ addEventListener('keyup', e => {
   render();
   loadReview().then(updateNav).catch(() => {});
   loadStars();
+  if (autoUpd()) setTimeout(() => checkUpdate(true), 4000);
   await pollCards();
   setInterval(pollCards, 2500);
 })();

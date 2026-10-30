@@ -40,6 +40,27 @@ pub struct Rec {
     #[serde(default)]
     pub sharp_v: Option<f32>,
     pub dhash: String,
+    /// [latitude, longitude] from EXIF GPS, when the camera recorded it.
+    #[serde(default)]
+    pub gps: Option<[f64; 2]>,
+    /// Record format version; older cached records are recomputed.
+    #[serde(default)]
+    pub ver: u32,
+}
+
+const REC_VER: u32 = 2;
+
+fn gps(ex: &exif::Exif) -> Option<[f64; 2]> {
+    let coord = |tag, rtag, neg: &str| {
+        let f = ex.get_field(tag, exif::In::PRIMARY)?;
+        let exif::Value::Rational(v) = &f.value else { return None };
+        let d = v.first()?.to_f64() + v.get(1).map_or(0.0, |r| r.to_f64()) / 60.0 + v.get(2).map_or(0.0, |r| r.to_f64()) / 3600.0;
+        let r = ex.get_field(rtag, exif::In::PRIMARY).map(|f| f.display_value().to_string()).unwrap_or_default();
+        Some(if r.contains(neg) { -d } else { d })
+    };
+    let lat = coord(exif::Tag::GPSLatitude, exif::Tag::GPSLatitudeRef, "S")?;
+    let lon = coord(exif::Tag::GPSLongitude, exif::Tag::GPSLongitudeRef, "W")?;
+    (lat.is_finite() && lon.is_finite() && (lat != 0.0 || lon != 0.0)).then_some([lat, lon])
 }
 
 #[derive(Serialize)]
@@ -199,6 +220,8 @@ fn analyze_one(cache: &Path, p: &Path, lib: &Path, meta: &fs::Metadata) -> Optio
         sharp,
         sharp_u: Some(u),
         sharp_v: Some(v),
+        gps: ex.as_ref().and_then(gps),
+        ver: REC_VER,
         dhash,
     })
 }
@@ -243,7 +266,7 @@ pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, cache_dir: &Path, lib: &str) -
         .filter_map(|(p, m)| {
             let key = p.to_string_lossy().to_string();
             let r = match cache.get(&key) {
-                Some(r) if r.size == m.len() && r.mtime == mtime_secs(m) && r.sharp_u.is_some() => Some(r.clone()),
+                Some(r) if r.size == m.len() && r.mtime == mtime_secs(m) && r.ver >= REC_VER => Some(r.clone()),
                 _ => analyze_one(cache_dir, p, lib, m),
             };
             let d = done.fetch_add(1, Ordering::Relaxed) + 1;

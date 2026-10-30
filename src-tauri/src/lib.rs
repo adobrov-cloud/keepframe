@@ -98,6 +98,11 @@ async fn backup_sync(app: AppHandle, library: String) -> Result<import::SyncRepo
 }
 
 #[tauri::command]
+async fn exact_copies(app: AppHandle, library: String) -> Result<Vec<verify::CopyGroup>, String> {
+    blocking(move || Ok(verify::exact_copies(&app, &library))).await
+}
+
+#[tauri::command]
 fn get_meta(library: String) -> std::collections::HashMap<String, meta::Meta> {
     meta::load(Path::new(&library))
 }
@@ -264,6 +269,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             get_settings,
             set_library,
@@ -289,7 +296,8 @@ pub fn run() {
             backup_sync,
             get_meta,
             set_meta,
-            shift_time
+            shift_time,
+            exact_copies
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -402,6 +410,9 @@ mod tests {
         assert_eq!(bm.shift, 0);
         assert!(!std::fs::read_to_string(&sc[0]).unwrap().contains("DateTimeOriginal"));
         assert_eq!(crate::meta::load(Path::new(&lib)).get(&crate::meta::rel(Path::new(&lib), old)).map(|v| v.rating), Some(5));
+
+        let copies = crate::verify::exact_copies(h, &lib);
+        println!("exact copies: {} groups", copies.len());
 
         let sync = crate::import::backup_sync(h, &lib, &backup).unwrap();
         println!("backup sync: copied={} skipped={} failed={:?}", sync.copied, sync.skipped, sync.failed);

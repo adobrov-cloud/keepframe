@@ -20,6 +20,8 @@
           "path": "/Volumes/**"
         }
       ]
-    }
+    },
+    "updater:default",
+    "process:allow-restart"
   ]
 }
