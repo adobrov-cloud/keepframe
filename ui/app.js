@@ -730,7 +730,7 @@ function swipeStage(S, info) {
     </div>
     <div class="rv-foot" style="justify-content:center"><span><kbd>←</kbd> ${S.outHint}</span><span><kbd>→</kbd> ${t('h_keep')}</span>
       <span><kbd>⌫</kbd> ${t('h_prev')}</span><span><kbd>${t('h_wheel')}</kbd> ${t('h_zoom')}</span>
-      <span><kbd>${t('h_space')}</kbd> ${t('h_1to1')}</span><span><kbd>I</kbd> ${t('h_info')}</span><span>${t('h_drag')}</span></div>`;
+      <span><kbd>${t('h_click')}</kbd> / <kbd>${t('h_space')}</kbd> ${t('h_1to1')}</span><span><kbd>I</kbd> ${t('h_info')}</span><span>${t('h_drag')}</span></div>`;
 }
 function swipeBind(main, S) {
   const r = S.items[S.i], card = $('#tcard', main);
@@ -821,10 +821,19 @@ function dragCard(card, S) {
     card.classList.toggle('go-out', dx < -40);
     card.classList.toggle('go-keep', dx > 40);
   };
-  card.onpointerup = card.onpointercancel = () => {
+  card.onpointerup = card.onpointercancel = e => {
     if (x0 === null) return;
     x0 = null;
     if (Math.abs(dx) > 120) return swipeDecide(S, dx < 0 ? 'out' : 'keep');
+    // A click without dragging toggles 100% at the clicked spot (Z.u/Z.v follow the cursor).
+    if (e.type === 'pointerup' && Math.abs(dx) < 5 && e.target.closest('.tcard') === card && swipeZoom?.card === card) {
+      card.style.transform = '';
+      card.classList.remove('go-out', 'go-keep');
+      const img = card.querySelector('img.zimg'), r = card.getBoundingClientRect();
+      const u = Z.s > 1 ? null : clamp((e.clientX - r.left - img.offsetLeft) / img.offsetWidth, 0, 1);
+      const v = Z.s > 1 ? null : clamp((e.clientY - r.top - img.offsetTop) / img.offsetHeight, 0, 1);
+      return zoom1to1(card, swipeZoom.apply, u, v);
+    }
     card.style.transition = 'transform .18s';
     card.style.transform = '';
     card.classList.remove('go-out', 'go-keep');
