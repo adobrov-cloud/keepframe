@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Photo Sorter</title>
+  <link rel="stylesheet" href="../ui/style.css">
+</head>
+<body>
+  <nav id="nav">
+    <div class="brand">Photo Sorter</div>
+    <button data-view="import" class="active"><span>⤓</span>Импорт</button>
+    <button data-view="dupes"><span>⧉</span>Дубли</button>
+    <button data-view="blurry"><span>◌</span>Смазанные</button>
+    <button data-view="stats"><span>▤</span>Статистика</button>
+    <button data-view="verify"><span>✓</span>Проверка карты</button>
+    <div class="spacer"></div>
+    <button data-view="settings"><span>⚙</span>Настройки</button>
+    <div id="lib" class="lib" title=""></div>
+  </nav>
+  <div id="content">
+    <div id="progress" hidden>
+      <div class="plabel"><span id="ptext"></span><span id="pnum"></span></div>
+      <div class="pbar"><i id="pfill"></i></div>
+    </div>
+    <main id="main"></main>
+  </div>
+  <div id="zoom" hidden><img alt=""></div>
+  <div id="toast" hidden></div>
+  <script src="mock.js"></script><script src="../ui/app.js"></script>
+</body>
+</html>
