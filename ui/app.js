@@ -737,7 +737,7 @@ function swipeStage(S, info) {
       ${nx ? `<div class="tcard under"><img data-path="${esc(nx.path)}" alt=""></div>` : ''}
       <div class="tcard zoom" id="tcard">
         <img class="zimg" data-path="${esc(r.path)}" alt="">
-        <span class="stamp s-out">${S.outLabel}</span><span class="stamp s-keep">${t('stamp_keep')}</span>
+        <span class="stamp s-out">${S.outLabel}</span><span class="stamp s-keep">${S.keepLabel || t('stamp_keep')}</span>
         <div class="exif" id="exif" ${exifOn() ? '' : 'hidden'}></div>
         <span class="zbadge"></span>
         <span class="fname">${esc(r.folder)} · ${esc(r.name)}${info ? ' · ' + info(r) : ''}</span>
@@ -745,11 +745,11 @@ function swipeStage(S, info) {
       ${loupe ? `<div class="loupe" id="loupe" title="${t('loupe')}" hidden><img alt=""><span>${t('loupe')}</span></div>` : ''}
     </div>
     <div class="tbtns">
-      <button class="round bad" id="no" title="${t('t_out')}">✕</button>
+      <button class="round bad" id="no" title="${S.outHint} (←)">✕</button>
       <button class="round" id="undo1" title="${t('t_back')}" ${S.i ? '' : 'disabled'}>↶</button>
-      <button class="round ok" id="yes" title="${t('t_keep')}">✓</button>
+      <button class="round ok" id="yes" title="${S.keepHint || t('h_keep')} (→)">✓</button>
     </div>
-    <div class="rv-foot" style="justify-content:center"><span><kbd>←</kbd> ${S.outHint}</span><span><kbd>→</kbd> ${t('h_keep')}</span>
+    <div class="rv-foot" style="justify-content:center"><span><kbd>←</kbd> ${S.outHint}</span><span><kbd>→</kbd> ${S.keepHint || t('h_keep')}</span>
       <span><kbd>⌫</kbd> ${t('h_prev')}</span><span><kbd>${t('h_wheel')}</kbd> ${t('h_zoom')}</span>
       <span><kbd>${t('h_click')}</kbd> / <kbd>${t('h_space')}</kbd> ${t('h_1to1')}</span><span><kbd>I</kbd> ${t('h_info')}</span><span>${t('h_drag')}</span></div>`;
 }
@@ -800,6 +800,9 @@ function toggleExif() {
 
 function swipeOut(S) {
   return [...S.dec].filter(([, d]) => d === 'out').map(([p]) => p);
+}
+function swipeKept(S) {
+  return [...S.dec].filter(([, d]) => d === 'keep').map(([p]) => p);
 }
 
 let flying = null;
@@ -1019,6 +1022,7 @@ async function viewReview(main) {
       <span class="mut">${t('with_raw', gb(sum(shown)))}</span><span class="grow"></span>
       <button class="btn" id="rall">${shown.every(i => R.sel.has(i.path)) ? t('sel_none') : t('sel_all')}</button>
       <button class="btn" id="rshow">${revealLabel()}</button>
+      <button class="btn" id="rswipe" ${shown.length && !state.busy ? '' : 'disabled'}>${t('review_swipe', shots(shown.length))}</button>
       <button class="btn primary" id="rback" ${selIn().length && !state.busy ? '' : 'disabled'}>${t('restore_n', shots(selIn().length))}</button>
     </div>
     <div class="grid">${shown.map(i => `
@@ -1040,6 +1044,7 @@ async function viewReview(main) {
     opener.revealItemInDir(R.folder === '*' ? dir : dir + '/' + R.folder);
   };
   $('#rback', main).onclick = () => restoreSelected(selIn());
+  $('#rswipe', main).onclick = () => startReviewSwipe(shown);
   main.querySelectorAll('.cell').forEach(el => {
     const p = el.dataset.path;
     el.onclick = () => {
@@ -1068,6 +1073,66 @@ function restoreSelected(paths) {
     state.blurry.stale = true;
     if (state.recs) state.recs = await invoke('analyze', { library: state.lib });
   });
+}
+
+// Swipe through a review folder: → returns the shot (and its RAW) to the library, ← leaves it in review.
+function startReviewSwipe(items) {
+  state.rswipe = {
+    items: items.map(i => ({ path: i.path, name: i.name, folder: i.folder })),
+    i: 0,
+    dec: new Map(),
+    outLabel: t('stamp_stay'),
+    outHint: t('h_stay'),
+    keepLabel: t('stamp_return'),
+    keepHint: t('h_return'),
+  };
+  go('rswipe');
+}
+
+function viewRSwipe(main) {
+  const S = state.rswipe;
+  if (S && !S.items.length && state.busy) {
+    main.innerHTML = `<h1>${t('rs_title')}</h1><div class="empty"><span class="spin"></span><h2>${t('task_restore')}</h2></div>`;
+    return;
+  }
+  if (!S?.items.length) { state.rswipe = null; state.view = 'review'; return viewReview(main); }
+  main.classList.add('fill');
+  const back = swipeKept(S).length, stay = S.dec.size - back;
+  const head = `<div class="rv-head"><button class="btn" id="rsBack">${t('back_to_review')}</button><b>${t('rs_title')}</b>
+      ${S.i < S.items.length ? `<span class="mut">${t('shot_n', S.i + 1, S.items.length)}</span>` : ''}
+      ${tally(stay, back)}
+      <span class="grow"></span>
+      ${S.i < S.items.length && back ? `<button class="btn" id="apply">${t('return_now', back)}</button>` : ''}</div>
+      ${progressBar(S.i, S.items.length)}`;
+  const bind = () => {
+    $('#rsBack', main).onclick = () => go('review');
+    $('#apply', main)?.addEventListener('click', applyRSwipe);
+  };
+  if (S.i >= S.items.length) {
+    main.innerHTML = `${head}<div class="empty"><div class="big">🎉</div><h2>${t('all_seen_n', shots(S.items.length))}</h2>
+      <p>${back ? t('rs_end', shots(back), shots(stay)) : t('rs_nothing')}</p>
+      <div class="row" style="justify-content:center;margin-top:16px">
+        <button class="btn" id="back1">${t('back_last')}</button>
+        <button class="btn primary" id="done" ${state.busy ? 'disabled' : ''}>${back ? t('restore_n', shots(back)) : t('done')}</button>
+      </div></div>`;
+    bind();
+    $('#back1', main).onclick = () => swipeBack(S);
+    $('#done', main).onclick = applyRSwipe;
+    return;
+  }
+  main.innerHTML = head + swipeStage(S);
+  bind();
+  swipeBind(main, S);
+}
+function applyRSwipe() {
+  const S = state.rswipe, back = swipeKept(S);
+  // Keep the undecided tail so the pass can continue after an early apply.
+  const done = new Set(S.items.slice(0, S.i).map(r => r.path));
+  S.items = S.items.filter(r => !done.has(r.path));
+  S.i = 0;
+  S.dec = new Map();
+  if (!back.length) { if (S.items.length) render(); else go('review'); return; }
+  return restoreSelected(back).then(() => { if (!S.items.length) go('review'); });
 }
 
 // ---------- stats ----------
@@ -1198,7 +1263,7 @@ function updateNav() {
   NAV.concat('settings').forEach(v => {
     const b = $(`#nav [data-view="${v}"]`);
     if (!b) return;
-    b.classList.toggle('active', state.view === v);
+    b.classList.toggle('active', state.view === v || (v === 'review' && state.view === 'rswipe'));
     const el = $('#b-' + v);
     el.textContent = counts[v] ? fmtN(counts[v]) : '';
   });
@@ -1208,7 +1273,7 @@ function updateNav() {
 // ---------- routing & keys ----------
 
 const views = { welcome: viewWelcome, import: viewImport, verify: viewVerify, dupes: viewDupes, blurry: viewBlurry,
-  review: viewReview, mindful: viewMindful, stats: viewStats, settings: viewSettings };
+  review: viewReview, rswipe: viewRSwipe, mindful: viewMindful, stats: viewStats, settings: viewSettings };
 function render() {
   const main = $('#main');
   main.classList.remove('fill');
@@ -1231,8 +1296,8 @@ let hoverPath = null;
 addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey || ['SELECT', 'INPUT'].includes(e.target.tagName)) return;
   const k = e.key.toLowerCase();
-  const swipe = { blurry: state.blurry, mindful: state.mindful }[state.view];
-  if ((k === 'z' || k === 'я') && hoverPath && !e.repeat && ['dupes', 'blurry', 'review', 'mindful'].includes(state.view)) {
+  const swipe = { blurry: state.blurry, mindful: state.mindful, rswipe: state.rswipe }[state.view];
+  if ((k === 'z' || k === 'я') && hoverPath && !e.repeat && ['dupes', 'blurry', 'review', 'mindful', 'rswipe'].includes(state.view)) {
     const z = $('#zoom');
     z.querySelector('img').src = '';
     thumb(hoverPath, 2400).then(src => (z.querySelector('img').src = src));

@@ -106,6 +106,10 @@ const STRINGS = {
     review_empty: 'Папки проверки пусты',
     all_folders: n => `Все папки (${n})`, with_raw: b => `${b} вместе с RAW`,
     sel_all: 'Выбрать все', sel_none: 'Снять выделение', restore_n: s => `Вернуть ${s} в библиотеку`,
+    review_swipe: s => `Пролистать ${s}`, rs_title: 'Возврат из проверки', back_to_review: '← На проверке',
+    stamp_return: 'ВЕРНУТЬ', stamp_stay: 'ОСТАВИТЬ', h_return: 'вернуть в библиотеку', h_stay: 'оставить на проверке',
+    rs_end: (b, s) => `${b} вернутся в библиотеку вместе с RAW, ${s} останутся на проверке.`,
+    rs_nothing: 'Ничего не возвращаем — всё остаётся на проверке.', return_now: n => `Вернуть сейчас (${n})`,
     back_tag: '↩ вернуть', h_select: 'выбрать для возврата', h_dbl: 'двойной клик', h_open: 'открыть в Просмотре',
 
     stats_title: 'Статистика', stats_sub: 'Сводка по настройкам съёмки и типичным проблемам.',
@@ -224,6 +228,10 @@ const STRINGS = {
     review_empty: 'Review folders are empty',
     all_folders: n => `All folders (${n})`, with_raw: b => `${b} including RAW`,
     sel_all: 'Select all', sel_none: 'Clear selection', restore_n: s => `Return ${s} to the library`,
+    review_swipe: s => `Swipe through ${s}`, rs_title: 'Return from review', back_to_review: '← For review',
+    stamp_return: 'RETURN', stamp_stay: 'STAY', h_return: 'return to library', h_stay: 'leave in review',
+    rs_end: (b, s) => `${b} go back to the library with their RAW, ${s} stay in review.`,
+    rs_nothing: 'Nothing to return — everything stays in review.', return_now: n => `Return now (${n})`,
     back_tag: '↩ return', h_select: 'select to return', h_dbl: 'double-click', h_open: 'open in Preview',
 
     stats_title: 'Statistics', stats_sub: 'A summary of shooting settings and common problems.',
