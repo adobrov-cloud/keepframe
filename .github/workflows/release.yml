@@ -56,11 +56,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: v__VERSION__
-          releaseName: Photo Sorter v__VERSION__
+          releaseName: Keepframe v__VERSION__
           releaseBody: |
             Сборки для macOS (Apple Silicon — aarch64, Intel — x64), Windows и Linux.
 
-            **macOS:** приложение не подписано Apple. После установки при первом запуске macOS скажет, что не может проверить разработчика — откройте System Settings → Privacy & Security и нажмите «Open Anyway». Если пишет, что приложение «повреждено», выполните в Terminal: `xattr -cr "/Applications/Photo Sorter.app"`.
+            **macOS:** приложение не подписано Apple. После установки при первом запуске macOS скажет, что не может проверить разработчика — откройте System Settings → Privacy & Security и нажмите «Open Anyway». Если пишет, что приложение «повреждено», выполните в Terminal: `xattr -cr "/Applications/Keepframe.app"`.
 
             **Windows:** SmartScreen может предупредить о неизвестном издателе — «Подробнее» → «Выполнить в любом случае».
           releaseDraft: false

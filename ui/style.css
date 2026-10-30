@@ -94,7 +94,8 @@ img { -webkit-user-drag: none; user-drag: none; }
   gap: 2px;
 }
 html.mac #nav { background: transparent; padding-top: 44px; border-right-color: rgba(127, 127, 127, .18); }
-.brand { font-weight: 700; font-size: 15px; padding: 4px 10px 14px; letter-spacing: .2px; }
+.brand { font-weight: 700; font-size: 15px; padding: 4px 10px 14px; letter-spacing: .2px; display: flex; align-items: center; gap: 8px; }
+.brand .ic { color: var(--fg2); pointer-events: none; }
 #nav button {
   all: unset;
   display: flex;
@@ -178,8 +179,8 @@ button.link { all: unset; color: var(--acc); cursor: pointer; }
 .welcome-box { margin: auto; width: min(560px, 100%); text-align: center; }
 .welcome-box .panel { text-align: left; }
 .welcome-box .sub { margin: 0 auto 26px; }
-.logo { width: 68px; height: 68px; border-radius: 18px; margin: 0 auto 16px; display: grid; place-items: center;
-  background: linear-gradient(135deg, #627888, #2b3034); color: #fff; border: 2px solid #e63e35; box-shadow: var(--shadow); }
+.logo { width: 96px; height: 96px; margin: 0 auto 10px; filter: drop-shadow(0 10px 24px #0005); }
+.logo svg { width: 100%; height: 100%; display: block; }
 .welcome-box h1 { font-size: 28px; }
 .welcome-box .big { margin-top: 8px; }
 

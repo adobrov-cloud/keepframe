@@ -66,8 +66,12 @@ const ICON = {
   eject: '<path d="m12 5 7 8H5z"/><path d="M5 18h14"/>',
   check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
   folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
-  sparkle: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18"/>',
 };
+// Keepframe logo: the full app icon, and a bare mark (frame corners + red tick) for the sidebar.
+const APP_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"> <defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3b4248"/><stop offset="1" stop-color="#23282b"/></linearGradient></defs> <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#bg)"/> <g fill="none" stroke="#B8C6D0" stroke-width="46" stroke-linecap="round" stroke-linejoin="round">  <path d="M282 420 V330 Q282 282 330 282 H420"/>  <path d="M604 282 H694 Q742 282 742 330 V420"/>  <path d="M742 604 V694 Q742 742 694 742 H604"/>  <path d="M420 742 H330 Q282 742 282 694 V604"/> </g> <path d="M398 520 L478 600 L636 430" fill="none" stroke="#E63E35" stroke-width="58" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const logoMark = (s = 20) => `<svg class="ic" viewBox="250 250 524 524" width="${s}" height="${s}" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <g stroke="currentColor" stroke-width="52"><path d="M282 420V330q0-48 48-48h90M604 282h90q48 0 48 48v90M742 604v90q0 48-48 48h-90M420 742h-90q-48 0-48-48v-90"/></g>
+  <path d="M398 520l80 80 158-170" stroke="var(--brand)" stroke-width="64"/></svg>`;
 const icon = (n, s = 18) =>
   `<svg class="ic" viewBox="0 0 24 24" width="${s}" height="${s}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICON[n]}</svg>`;
 
@@ -340,8 +344,8 @@ const noCard = () => `<div class="empty"><div class="big">${icon('card', 54)}</d
 function viewWelcome(main) {
   document.body.classList.add('welcome');
   main.innerHTML = `<div class="welcome-box">
-    <div class="logo">${icon('sparkle', 34)}</div>
-    <h1>Photo Sorter</h1>
+    <div class="logo">${APP_ICON}</div>
+    <h1>Keepframe</h1>
     <p class="sub">${t('welcome_tag')}</p>
     <div class="panel"><h3>${t('welcome_lang')}</h3>
       ${langSelect()}</div>
@@ -1506,7 +1510,7 @@ function setLib(lib) {
 const NAV = ['gallery', 'import', 'mindful', 'dupes', 'blurry', 'review', 'stats', 'verify'];
 function buildNav() {
   const item = v => `<button data-view="${v}">${icon(v)}<span class="lbl">${t('nav_' + v)}</span><span class="badge" id="b-${v}"></span></button>`;
-  $('#nav').innerHTML = `<div class="brand" data-tauri-drag-region>Photo Sorter</div>
+  $('#nav').innerHTML = `<div class="brand" data-tauri-drag-region>${logoMark(20)}<span>Keepframe</span></div>
     ${NAV.map(item).join('')}<div class="spacer" data-tauri-drag-region></div>${item('settings')}<div id="lib" class="lib"></div>`;
   $('#nav').querySelectorAll('button[data-view]').forEach(b => (b.onclick = () => go(b.dataset.view)));
 }

@@ -1,12 +1,14 @@
 <div align="center">
 
-# Photo Sorter
+<img src="docs/logo/keepframe.svg" alt="Keepframe" width="120">
+
+# Keepframe
 
 **От карты памяти до аккуратной библиотеки — быстро, офлайн и без единого удалённого снимка.**
 
 Импорт со сверкой контрольных сумм · отбор дублей и смазанных свайпами · просмотр всей библиотеки · ответ на вопрос «можно ли форматировать карту».
 
-[Скачать](https://github.com/adobrov-cloud/photo-sorter/releases) · [English](README.md)
+[Скачать](https://github.com/adobrov-cloud/keepframe/releases) · [English](README.md)
 
 <img src="docs/screenshots/gallery.png" alt="Галерея" width="900">
 
@@ -18,7 +20,7 @@
 
 За день съёмки легко набираются сотни кадров: серии почти одинаковых снимков, несколько смазанных, пары JPG + RAW, пара видео. Разбирать это в Finder долго, а перед форматированием карты всегда сидит мысль «а всё ли скопировалось?».
 
-Photo Sorter превращает это в дело нескольких минут:
+Keepframe превращает это в дело нескольких минут:
 
 1. **Вставили карту** — новые кадры копируются в папки по дням, каждая копия сверяется по SHA-256.
 2. **Свайпнули** — оставляете или отбраковываете каждый новый кадр, либо приложение само находит серии и смазанные.
@@ -105,18 +107,18 @@ Photo Sorter превращает это в дело нескольких мин
 
 ## Установка
 
-Сборка для вашей системы — на странице [Releases](https://github.com/adobrov-cloud/photo-sorter/releases):
+Сборка для вашей системы — на странице [Releases](https://github.com/adobrov-cloud/keepframe/releases):
 
 | Система | Файл |
 |---|---|
-| macOS, Apple Silicon | `Photo.Sorter_x.y.z_aarch64.dmg` |
-| macOS, Intel | `Photo.Sorter_x.y.z_x64.dmg` |
-| Windows | `Photo.Sorter_x.y.z_x64-setup.exe` |
+| macOS, Apple Silicon | `Keepframe_x.y.z_aarch64.dmg` |
+| macOS, Intel | `Keepframe_x.y.z_x64.dmg` |
+| Windows | `Keepframe_x.y.z_x64-setup.exe` |
 | Linux | `.deb`, `.rpm` или `.AppImage` |
 
 Платного сертификата Apple / Microsoft у приложения пока нет:
 
-- **macOS** — при первом запуске откройте *System Settings → Privacy & Security* и нажмите *Open Anyway*. Если macOS пишет, что приложение повреждено, выполните в Terminal `xattr -cr "/Applications/Photo Sorter.app"`.
+- **macOS** — при первом запуске откройте *System Settings → Privacy & Security* и нажмите *Open Anyway*. Если macOS пишет, что приложение повреждено, выполните в Terminal `xattr -cr "/Applications/Keepframe.app"`.
 - **Windows** — SmartScreen может предупредить о неизвестном издателе: *Подробнее → Выполнить в любом случае*.
 
 ## Как устроено

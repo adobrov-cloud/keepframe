@@ -1,12 +1,14 @@
 <div align="center">
 
-# Photo Sorter
+<img src="docs/logo/keepframe.svg" alt="Keepframe" width="120">
+
+# Keepframe
 
 **From memory card to a clean library — fast, offline, and without ever deleting a photo.**
 
 Import with checksum verification · cull bursts and blurry shots by swiping · browse your whole library · know when it's safe to format the card.
 
-[Download](https://github.com/adobrov-cloud/photo-sorter/releases) · [Русская версия](README.ru.md)
+[Download](https://github.com/adobrov-cloud/keepframe/releases) · [Русская версия](README.ru.md)
 
 <img src="docs/screenshots/gallery.png" alt="Gallery" width="900">
 
@@ -18,7 +20,7 @@ Import with checksum verification · cull bursts and blurry shots by swiping · 
 
 A day of shooting easily produces hundreds of frames: bursts of near-identical shots, a few soft ones, JPG + RAW pairs, a couple of videos. Sorting that in Finder is slow, and formatting the card always comes with a nagging *"did everything actually copy?"*
 
-Photo Sorter turns that into a routine of a few minutes:
+Keepframe turns that into a routine of a few minutes:
 
 1. **Insert the card** — new shots are copied into per-day folders, each copy verified by SHA-256.
 2. **Swipe** — keep or reject every new shot, or let the app find bursts and blurry frames for you.
@@ -105,18 +107,18 @@ In the gallery: **Shift-click** selects a range, **⌘/Ctrl-click** toggles one,
 
 ## Install
 
-Get the build for your system from [Releases](https://github.com/adobrov-cloud/photo-sorter/releases):
+Get the build for your system from [Releases](https://github.com/adobrov-cloud/keepframe/releases):
 
 | System | File |
 |---|---|
-| macOS, Apple Silicon | `Photo.Sorter_x.y.z_aarch64.dmg` |
-| macOS, Intel | `Photo.Sorter_x.y.z_x64.dmg` |
-| Windows | `Photo.Sorter_x.y.z_x64-setup.exe` |
+| macOS, Apple Silicon | `Keepframe_x.y.z_aarch64.dmg` |
+| macOS, Intel | `Keepframe_x.y.z_x64.dmg` |
+| Windows | `Keepframe_x.y.z_x64-setup.exe` |
 | Linux | `.deb`, `.rpm` or `.AppImage` |
 
 The app isn't signed with a paid Apple / Microsoft certificate yet:
 
-- **macOS** — on first launch open *System Settings → Privacy & Security* and click *Open Anyway*. If macOS says the app is damaged, run `xattr -cr "/Applications/Photo Sorter.app"` in Terminal.
+- **macOS** — on first launch open *System Settings → Privacy & Security* and click *Open Anyway*. If macOS says the app is damaged, run `xattr -cr "/Applications/Keepframe.app"` in Terminal.
 - **Windows** — SmartScreen may warn about an unknown publisher: *More info → Run anyway*.
 
 ## How it works
