@@ -4,7 +4,8 @@ const plan={total:2036,already:1475,bytes:13.2e9,items:Array.from({length:561},(
  days:[{date:'2026-10-24',folder:'24 Oct',photos:8,raws:8,videos:0,bytes:5e8},{date:'2026-10-25',folder:'25 Oct',photos:88,raws:88,videos:1,bytes:6.1e9}]};
 let listeners=[];
 RECS.forEach((r,i)=>{r.sharp_u=((i*7)%4+.5)/4;r.sharp_v=((i*3)%4+.5)/4;});
-const thumbOf=p=>{let h=0;for(const ch of p)h=(h*31+ch.charCodeAt(0))|0;return 'thumbs/'+TH[Math.abs(h)%TH.length]};
+// Neighbouring frame numbers get look-alike pictures (the demo images come in similar pairs), so bursts read as bursts.
+const thumbOf=p=>{const m=p.match(/(\d{3,})\.\w+$/);if(m){const n=+m[1];return 'thumbs/'+TH[(Math.floor(n/4)*2+(n%2))%TH.length]}let h=0;for(const ch of p)h=(h*31+ch.charCodeAt(0))|0;return 'thumbs/'+TH[Math.abs(h)%TH.length]};
 const REVIEW=Array.from({length:40},(_, i)=>{const d=i<34?'_на проверку (дубли)':'_review (blurry)';return {path:'/lib/'+d+'/'+(i<25?'25 Oct':'10 Oct')+'/DSCF'+(1700+i)+'.JPG',kind:i<34?'дубли':'blurry',dir:d,folder:i<25?'25 Oct':'10 Oct',name:'DSCF'+(1700+i)+'.JPG',size:15e6,raws:i%2,raw_size:i%2?37e6:0}});
 const STARS=new Set();
 window.__TAURI__={core:{invoke:async(c,a)=>{console.log('invoke',c,a);await new Promise(r=>setTimeout(r,250));
@@ -17,7 +18,52 @@ window.__TAURI__={core:{invoke:async(c,a)=>{console.log('invoke',c,a);await new 
  case 'thumb':return thumbOf(a.path);
  case 'verify_card':return {card_files:2036,card_bytes:47.2e9,matched:2036,missing:[],only_in_review:767,checksum_file:'/lib/.photo-sorter/checksums/card.sha256'};
  case 'undo_count':return 2;case 'review_dir':return '/lib/'+a.folder;case 'move_to_review':return a.paths.length*2;
- case 'list_review':return REVIEW;case 'list_videos':return [{path:'/lib/25 Oct/DSCF1799.MOV',folder:'25 Oct',name:'DSCF1799.MOV',size:2e8,mtime:1793260000}];case 'get_stars':return [...STARS];case 'set_star':{const r=a.path.replace('/Users/me/Pictures/Photos/','');a.on?STARS.add(r):STARS.delete(r);return [...STARS]}case 'restore_from_review':return a.paths.length*2;
+ case 'list_review':return REVIEW;case 'list_videos':return [{path:'/lib/25 Oct/DSCF1799.MOV',folder:'25 Oct',name:'DSCF1799.MOV',size:2e8,mtime:1793260000}];case 'get_stars':return [...STARS];case 'set_stars':{for(const p of a.paths){const r=p.replace('/Users/me/Pictures/Photos/','');a.on?STARS.add(r):STARS.delete(r)}return [...STARS]}case 'restore_from_review':return a.paths.length*2;
  case 'run_import':return {copied:561,skipped:0,bytes:13.2e9,failed:[],folders:['24 Oct','25 Oct'],photos:Array.from({length:12},(_, i)=>'/lib/25 Oct/DSCF'+(1800+i)+'.JPG')};}},
  convertFileSrc:p=>p.startsWith('thumbs/')?p:thumbOf(p)},
  event:{listen:async(n,f)=>{listeners.push(f)}},dialog:{open:async()=>null},opener:{revealItemInDir:async()=>{},openPath:async()=>{}}};
+
+// Screenshot scenes: index.html?scene=gallery&lang=en&theme=dark opens straight on a prepared screen.
+(() => {
+  const q = new URLSearchParams(location.search), scene = q.get('scene');
+  if (!scene) return;
+  // Headless capture never scrolls, so lazy thumbnails would stay empty: report everything as visible.
+  window.IntersectionObserver = class { constructor(cb) { this.cb = cb; } observe(el) { setTimeout(() => this.cb([{ isIntersecting: true, target: el }])); } unobserve() {} };
+  localStorage.clear();
+  localStorage.setItem('lang', q.get('lang') || 'en');
+  localStorage.setItem('mindful', '1');
+  if (scene !== 'welcome') localStorage.setItem('onboarded', '1');
+  RECS.slice(0, 40).forEach((r, i) => i % 7 === 0 && STARS.add(r.path));
+  // No macOS vibrancy in a browser: draw the sidebar solid.
+  addEventListener('DOMContentLoaded', () => {
+    document.documentElement.classList.remove('mac');
+    // Freeze animations so a capture never lands mid-transition.
+    document.head.insertAdjacentHTML('beforeend', '<style>*,*::before,*::after{animation:none!important;transition:none!important}</style>');
+  });
+  addEventListener('load', () => setTimeout(async () => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    const wheel = (el, dy, fx = .5, fy = .45) => { const b = el.getBoundingClientRect();
+      el.dispatchEvent(new WheelEvent('wheel', { deltaY: dy, clientX: b.left + b.width * fx, clientY: b.top + b.height * fy, bubbles: true, cancelable: true })); };
+    if (scene !== 'import' && scene !== 'verify' && scene !== 'welcome') state.recs = RECS;
+    await loadStars();
+    switch (scene) {
+      case 'gallery': go('gallery'); break;
+      case 'select': go('gallery'); await wait(400); state.gallery.selecting = true;
+        galleryShown().slice(3, 9).forEach(x => state.gallery.sel.add(x.path)); render(); break;
+      case 'viewer': go('gallery'); await wait(400); openViewer(4); break;
+      case 'dupes': {
+        state.dupes.groups = []; go('dupes');
+        // A burst of 3+ whose demo pictures are all look-alikes.
+        const pair = p => Math.floor(TH.indexOf(thumbOf(p).slice(7)) / 2);
+        const i = state.dupes.groups.findIndex(g => g.items.length >= 3 && g.items.every(r => pair(r.path) === pair(g.items[0].path)));
+        state.dupes.i = Math.max(0, i); render(); await wait(600);
+        document.querySelectorAll('.shot.zoom').forEach(() => {}); wheel(document.querySelector('.shot.zoom'), -160, .62, .55); break; }
+      case 'blurry': go('blurry'); break;
+      case 'mindful': startMindful(RECS.slice(20, 44).map(r => r.path)); await wait(300); swipeDecide(state.mindful, 'keep'); break;
+      case 'review': go('review'); break;
+      case 'stats': go('stats'); break;
+      case 'verify': go('verify'); while (!state.card || state.busy) await wait(100); runVerify(); break;
+      default: go(scene);
+    }
+  }, 300));
+})();

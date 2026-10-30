@@ -197,8 +197,8 @@ fn get_stars(library: String) -> Vec<String> {
 }
 
 #[tauri::command]
-fn set_star(library: String, path: String, on: bool) -> Result<Vec<String>, String> {
-    review::set_star(&library, &path, on)
+fn set_stars(library: String, paths: Vec<String>, on: bool) -> Result<Vec<String>, String> {
+    review::set_stars(&library, &paths, on)
 }
 
 #[tauri::command]
@@ -236,7 +236,7 @@ pub fn run() {
             photo_info,
             list_videos,
             get_stars,
-            set_star
+            set_stars
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -309,8 +309,8 @@ mod tests {
         println!("videos: {:?}", vids.iter().map(|v| (&v.folder, &v.name)).collect::<Vec<_>>());
         let poster = crate::analyze::thumb(Path::new(&lib).join(".thumbcache").as_path(), Path::new(&vids[0].path), 480);
         println!("video poster: {poster:?}");
-        let st = crate::review::set_star(&lib, &r.path, true).unwrap();
+        let st = crate::review::set_stars(&lib, &[r.path.clone()], true).unwrap();
         assert_eq!(crate::review::stars(&lib), st);
-        assert!(crate::review::set_star(&lib, &r.path, false).unwrap().is_empty());
+        assert!(crate::review::set_stars(&lib, &[r.path.clone()], false).unwrap().is_empty());
     }
 }

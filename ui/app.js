@@ -16,27 +16,31 @@ function lsSet(k, v) {
 
 // ---------- i18n ----------
 
-const LANG = ls('lang') || (navigator.language.startsWith('ru') ? 'ru' : 'en');
+// Interface languages, by native name. English is the default and the fallback for any missing string.
+const LANGS = [['en', 'English'], ['ru', 'Русский'], ['uk', 'Українська'], ['es', 'Español'], ['pt', 'Português'],
+  ['fr', 'Français'], ['de', 'Deutsch'], ['it', 'Italiano'], ['pl', 'Polski'], ['tr', 'Türkçe'],
+  ['zh', '简体中文'], ['ja', '日本語'], ['ko', '한국어']].filter(([c]) => STRINGS[c]);
+const LANG = STRINGS[ls('lang')] ? ls('lang') : 'en';
 const L = STRINGS[LANG];
 function t(k, ...a) {
-  const v = L[k] ?? STRINGS.ru[k] ?? k;
+  const v = L[k] ?? STRINGS.en[k] ?? k;
   return typeof v === 'function' ? v(...a) : v;
 }
 const IS_MAC = /Mac/.test(navigator.userAgent);
 document.documentElement.lang = LANG;
 document.documentElement.classList.toggle('mac', IS_MAC);
-const revealLabel = () => (IS_MAC ? t('reveal') : LANG === 'ru' ? 'Показать в папке' : 'Show in folder');
+const revealLabel = () => t(IS_MAC ? 'reveal' : 'reveal_other');
 
 const shots = n => t('shots', n), files = n => t('files', n);
 function gb(b) {
   const [kb, mb, g] = L.units;
-  if (b >= 1e9) return (b / 1e9).toFixed(1).replace('.', L.decimal) + ' ' + g;
+  if (b >= 1e9) return (b / 1e9).toLocaleString(LANG, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' ' + g;
   if (b >= 1e6) return Math.round(b / 1e6) + ' ' + mb;
   return Math.round(b / 1e3) + ' ' + kb;
 }
 const fmtN = n => n.toLocaleString(LANG);
 
-// Review folders: "<prefix> (<kind>)", named in the current language; both languages are recognised.
+// Review folders: "<prefix> (<kind>)" — Russian names in the Russian UI, English ones otherwise; both are recognised.
 const KINDS = { dupes: ['дубли', 'duplicates'], blurry: ['смазанные', 'blurry'], rejects: ['отсев', 'rejects'] };
 const folderFor = k => (LANG === 'ru' ? `_на проверку (${KINDS[k][0]})` : `_review (${KINDS[k][1]})`);
 function kindLabel(raw) {
@@ -87,7 +91,7 @@ const state = {
   review: { items: null, dir: null, folder: '*', sel: new Set() },
   videos: null,        // videos in the library
   stars: new Set(),    // favourite shots, library-relative paths
-  gallery: { scope: '*', filter: 'all', open: null },
+  gallery: { scope: '*', filter: 'all', open: null, sel: new Set(), selecting: false, anchor: null },
   busy: false,
 };
 
@@ -340,7 +344,7 @@ function viewWelcome(main) {
     <h1>Photo Sorter</h1>
     <p class="sub">${t('welcome_tag')}</p>
     <div class="panel"><h3>${t('welcome_lang')}</h3>
-      <div class="seg">${['ru', 'en'].map(l => `<button data-lang="${l}" class="${l === LANG ? 'on' : ''}">${l === 'ru' ? 'Русский' : 'English'}</button>`).join('')}</div></div>
+      ${langSelect()}</div>
     <div class="panel"><h3>${t('welcome_lib')}</h3><div class="mut small" style="margin-bottom:10px">${t('welcome_lib_sub')}</div>
       <div class="pathrow">${icon('folder', 16)}<span>${esc(state.lib)}</span><button class="btn" id="pick">${t('change')}</button></div></div>
     <button class="btn primary big" id="start">${t('welcome_go')}</button>
@@ -353,12 +357,13 @@ function viewWelcome(main) {
     go('import');
   };
 }
+const langSelect = () =>
+  `<select id="lang">${LANGS.map(([c, n]) => `<option value="${c}" ${c === LANG ? 'selected' : ''}>${n}</option>`).join('')}</select>`;
 function bindLang(main) {
-  main.querySelectorAll('[data-lang]').forEach(b => (b.onclick = () => {
-    if (b.dataset.lang === LANG) return;
-    lsSet('lang', b.dataset.lang);
+  $('#lang', main).onchange = e => {
+    lsSet('lang', e.target.value);
     location.reload();
-  }));
+  };
 }
 async function pickLibrary() {
   const dir = await dialog.open({ directory: true, defaultPath: state.lib });
@@ -786,11 +791,11 @@ function swipeBind(main, S) {
     let src;
     im.onload = () => {
       if (!lp.isConnected) return;
+      lp.hidden = false;   // measure only once shown: a hidden loupe has no size
       const w = lp.clientWidth, h = lp.clientHeight;
       Object.assign(img.style, { width: im.naturalWidth + 'px', height: im.naturalHeight + 'px',
         left: w / 2 - r.sharp_u * im.naturalWidth + 'px', top: h / 2 - r.sharp_v * im.naturalHeight + 'px' });
       img.src = src;
-      lp.hidden = false;
     };
     (isRaw(r.path) ? invoke('thumb', { path: r.path, size: 8000 }).then(convertFileSrc) : Promise.resolve(convertFileSrc(r.path)))
       .then(u => { src = u; im.src = u; }).catch(() => {});
@@ -1160,12 +1165,13 @@ const isStar = p => state.stars.has(relPath(p));
 async function loadStars() {
   state.stars = new Set(await invoke('get_stars', { library: state.lib }).catch(() => []));
 }
-async function toggleStar(path) {
+async function setStars(paths, on) {
   try {
-    state.stars = new Set(await invoke('set_star', { library: state.lib, path, on: !isStar(path) }));
+    state.stars = new Set(await invoke('set_stars', { library: state.lib, paths, on }));
   } catch (e) { showError(e); }
   render();
 }
+const toggleStar = path => setStars([path], !isStar(path));
 
 // Photos come from the analysis records (one per shot, RAW-only included), videos from their own listing.
 let galleryMemo = { recs: null, videos: null, items: [] };
@@ -1213,15 +1219,17 @@ function viewGallery(main) {
       <span class="grow"></span>
       <select id="gscope"><option value="*">${t('scope_all')}</option>${days4sel.map(d => `<option value="${esc(d)}" ${d === G.scope ? 'selected' : ''}>${esc(d)}</option>`).join('')}</select>
       <div class="seg">${['all', 'stars', 'videos'].map(f => `<button data-f="${f}" class="${G.filter === f ? 'on' : ''}">${t('g_' + f)}</button>`).join('')}</div>
-      <input type="range" id="gsize" min="110" max="340" step="10" value="${h}" title="${t('g_size')}"></div>
+      <input type="range" id="gsize" min="110" max="340" step="10" value="${h}" title="${t('g_size')}">
+      <button class="btn ${G.selecting ? 'on' : ''}" id="gselect">${t('g_select')}</button></div>
     ${shown.length ? days.map(([day, list]) => `<section class="g-day">
       <div class="g-h"><b>${esc(day)}</b><span class="mut">${fmtTs(list[0][0].ts, { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })} · ${list.length}</span></div>
       <div class="g-row" style="--h:${h}px">${list.map(([it, i]) => {
         const a = it.video ? 16 / 9 : it.vertical ? 2 / 3 : 3 / 2;
-        return `<div class="gt ${it.video ? 'vid' : ''}" data-i="${i}" style="flex:${a} 1 ${Math.round(a * h)}px">
+        return `<div class="gt ${it.video ? 'vid' : ''} ${G.sel.has(it.path) ? 'sel' : ''}" data-i="${i}" style="flex:${a} 1 ${Math.round(a * h)}px">
+          <span class="gck">${icon('check', 14)}</span>
           <img data-path="${esc(it.path)}" alt="">${it.video ? `<span class="gv">${icon('play', 22)}</span>` : ''}
           ${isStar(it.path) ? `<span class="gs">${icon('star', 14)}</span>` : ''}</div>`;
-      }).join('')}<i class="g-fill"></i></div></section>`).join('')
+      }).join('')}<i class="g-fill"></i></div></section>`).join('') + selBar()
     : `<div class="empty"><div class="big">${icon(G.filter === 'stars' ? 'star' : 'gallery', 54)}</div><h2>${t('g_empty')}</h2>${G.filter === 'stars' ? t('g_empty_stars') : ''}</div>`}`;
   lazyThumbs(main, h > 220 ? 800 : 480);
   $('#gscope', main).onchange = e => { G.scope = e.target.value; render(); };
@@ -1235,12 +1243,77 @@ function viewGallery(main) {
     });
   };
   $('#gsize', main).onchange = () => render();
+  main.classList.toggle('selecting', G.selecting || G.sel.size > 0);
+  $('#gselect', main).onclick = () => { G.selecting = !G.selecting; if (!G.selecting) G.sel.clear(); render(); };
   main.querySelectorAll('.gt').forEach(el => {
-    const it = shown[+el.dataset.i];
-    el.onclick = () => (it.video ? opener.openPath(it.path) : openViewer(+el.dataset.i));
+    const i = +el.dataset.i, it = shown[i];
+    el.onclick = e => {
+      // Shift picks a range from the last clicked tile, ⌘/Ctrl toggles one; in selection mode a plain click toggles too.
+      if (e.shiftKey && G.anchor != null) {
+        const [a, b] = [Math.min(G.anchor, i), Math.max(G.anchor, i)];
+        shown.slice(a, b + 1).forEach(x => G.sel.add(x.path));
+      } else if (e.metaKey || e.ctrlKey || G.selecting || G.sel.size) {
+        G.sel.has(it.path) ? G.sel.delete(it.path) : G.sel.add(it.path);
+        G.anchor = i;
+      } else {
+        G.anchor = i;
+        return it.video ? opener.openPath(it.path) : openViewer(i);
+      }
+      refreshSel(main, shown);
+    };
     el.onmouseenter = () => (hoverPath = it.path);
   });
+  bindSelBar(main, shown);
   if (G.scrollTo) { main.querySelector(`.gt[data-i="${G.scrollTo}"]`)?.scrollIntoView({ block: 'center' }); G.scrollTo = null; }
+}
+
+// Selection bar; updated in place so ticking tiles in a big library doesn't re-render the grid.
+function selBar() {
+  const G = state.gallery, n = G.sel.size;
+  if (!n && !G.selecting) return '';
+  const paths = [...G.sel], allStar = n && paths.every(isStar);
+  return `<div class="selbar" id="selbar"><b>${t('g_selected', fmtN(n))}</b>
+    <button class="btn" id="sStar" ${n ? '' : 'disabled'}>${icon('star', 15)} ${allStar ? t('g_unstar_sel') : t('g_star_sel')}</button>
+    <button class="btn" id="sReject" ${n && !state.busy ? '' : 'disabled'}>${t('g_reject_sel')}</button>
+    <button class="btn" id="sReveal" ${n ? '' : 'disabled'}>${revealLabel()}</button>
+    <button class="btn" id="sAll">${t('sel_all')}</button>
+    <button class="btn" id="sNone">${t('sel_none')}</button>
+    <span class="mut small"><kbd>Shift</kbd> ${t('h_range')} · <kbd>${IS_MAC ? '⌘' : 'Ctrl'}</kbd> ${t('h_one')} · <kbd>${IS_MAC ? '⌘' : 'Ctrl'}A</kbd> ${t('h_all')}</span></div>`;
+}
+function bindSelBar(main, shown) {
+  const G = state.gallery, bar = $('#selbar', main);
+  if (!bar) return;
+  $('#sStar', bar).onclick = () => { const p = [...G.sel]; setStars(p, !p.every(isStar)); };
+  $('#sReject', bar).onclick = () => applyMoves('rejects', [...G.sel])?.then(() => { G.sel.clear(); G.selecting = false; render(); });
+  $('#sReveal', bar).onclick = () => opener.revealItemInDir([...G.sel][0]);
+  $('#sAll', bar).onclick = () => { shown.forEach(x => G.sel.add(x.path)); refreshSel(main, shown); };
+  $('#sNone', bar).onclick = () => { G.sel.clear(); G.selecting = false; render(); };
+}
+function refreshSel(main, shown) {
+  const G = state.gallery;
+  main.querySelectorAll('.gt').forEach(el => el.classList.toggle('sel', G.sel.has(shown[+el.dataset.i].path)));
+  main.classList.toggle('selecting', G.selecting || G.sel.size > 0);
+  $('#selbar', main)?.remove();
+  main.insertAdjacentHTML('beforeend', selBar());
+  bindSelBar(main, shown);
+}
+// ⌘A selects everything shown, Esc clears the selection. Returns true when the key was handled.
+function galleryKey(e) {
+  const G = state.gallery;
+  if ((e.metaKey || e.ctrlKey) && e.code === 'KeyA') {
+    e.preventDefault();
+    const shown = galleryShown();
+    shown.forEach(x => G.sel.add(x.path));
+    refreshSel($('#main'), shown);
+    return true;
+  }
+  if (e.key === 'Escape' && (G.sel.size || G.selecting)) {
+    G.sel.clear();
+    G.selecting = false;
+    render();
+    return true;
+  }
+  return false;
 }
 
 let viewerZoom = null;
@@ -1396,7 +1469,7 @@ async function viewSettings(main) {
   if (state.view !== 'settings') return;
   main.innerHTML = `<h1>${t('settings_title')}</h1><p class="sub">${t('settings_sub')}</p>
     <div class="panel"><h3>${t('s_lang')}</h3><div class="mut small" style="margin-bottom:10px">${t('s_lang_sub')}</div>
-      <div class="seg">${['ru', 'en'].map(l => `<button data-lang="${l}" class="${l === LANG ? 'on' : ''}">${l === 'ru' ? 'Русский' : 'English'}</button>`).join('')}</div></div>
+      ${langSelect()}</div>
     <div class="panel"><h3>${t('s_lib')}</h3>
       <div class="pathrow">${icon('folder', 16)}<span>${esc(state.lib)}</span>
         <button class="btn" id="pick">${t('change')}</button><button class="btn" id="reveal">${revealLabel()}</button></div></div>
@@ -1421,6 +1494,7 @@ function setLib(lib) {
     state.review.items = null;
     state.videos = null;
     state.gallery.open = null;
+    state.gallery.sel.clear();
   }
   state.lib = lib;
   $('#lib').textContent = lib;
@@ -1484,8 +1558,12 @@ function go(v) {
 
 let hoverPath = null;
 addEventListener('keydown', e => {
-  if (e.metaKey || e.ctrlKey || ['SELECT', 'INPUT'].includes(e.target.tagName)) return;
-  const k = e.key.toLowerCase();
+  if (['SELECT', 'INPUT'].includes(e.target.tagName)) return;
+  if (state.view === 'gallery' && state.gallery.open == null && galleryKey(e)) return;
+  if (e.metaKey || e.ctrlKey) return;
+  // Letter shortcuts go by physical key, so they work in any keyboard layout.
+  const code = { KeyZ: 'z', KeyF: 'f', KeyI: 'i', KeyA: 'a' }[e.code];
+  const k = code || e.key.toLowerCase();
   if (state.view === 'gallery' && state.gallery.open != null) {
     const it = galleryShown()[state.gallery.open];
     if (!it) return;
@@ -1493,14 +1571,14 @@ addEventListener('keydown', e => {
     else if (k === 'arrowright') { e.preventDefault(); stepViewer(1); }
     else if (k === 'arrowleft') { e.preventDefault(); stepViewer(-1); }
     else if (k === ' ') { e.preventDefault(); if (viewerZoom?.box.isConnected) zoom1to1(viewerZoom.box, viewerZoom.apply); }
-    else if (k === 'f' || k === 'а') toggleStar(it.path);
-    else if (k === 'i' || k === 'ш') toggleExif();
+    else if (k === 'f') toggleStar(it.path);
+    else if (k === 'i') toggleExif();
     else if (k === 'backspace' || k === 'delete') { e.preventDefault(); if (!state.busy) rejectFromViewer(it); }
     else if (k === '0') { resetZoom(); viewerZoom?.apply(); }
     return;
   }
   const swipe = { blurry: state.blurry, mindful: state.mindful, rswipe: state.rswipe }[state.view];
-  if ((k === 'z' || k === 'я') && hoverPath && !e.repeat && ['dupes', 'blurry', 'review', 'mindful', 'rswipe'].includes(state.view)) {
+  if (k === 'z' && hoverPath && !e.repeat && ['dupes', 'blurry', 'review', 'mindful', 'rswipe'].includes(state.view)) {
     const z = $('#zoom');
     z.querySelector('img').src = '';
     thumb(hoverPath, 2400).then(src => (z.querySelector('img').src = src));
@@ -1516,7 +1594,7 @@ addEventListener('keydown', e => {
     else if (k === 'arrowright') { e.preventDefault(); swipeDecide(swipe, 'keep'); }
     else if (k === 'backspace' || k === 'arrowup') { e.preventDefault(); swipeBack(swipe); }
     else if (k === ' ') { e.preventDefault(); if (swipeZoom?.card.isConnected) zoom1to1(swipeZoom.card, swipeZoom.apply); }
-    else if (k === 'i' || k === 'ш') toggleExif();
+    else if (k === 'i') toggleExif();
   } else if (swipe?.items?.length && k === 'backspace') {
     e.preventDefault();
     swipeBack(swipe);
@@ -1528,7 +1606,7 @@ addEventListener('keydown', e => {
   }
 });
 addEventListener('keyup', e => {
-  if (['z', 'я'].includes(e.key.toLowerCase())) $('#zoom').hidden = true;
+  if (e.code === 'KeyZ' || e.key.toLowerCase() === 'z') $('#zoom').hidden = true;
 });
 
 (async () => {

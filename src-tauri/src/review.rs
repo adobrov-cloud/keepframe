@@ -231,12 +231,14 @@ pub fn stars(lib: &str) -> Vec<String> {
     fs::read(stars_file(Path::new(lib))).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
-pub fn set_star(lib: &str, path: &str, on: bool) -> Result<Vec<String>, String> {
-    let rel = Path::new(path).strip_prefix(lib).map_err(err)?.to_string_lossy().to_string();
+pub fn set_stars(lib: &str, paths: &[String], on: bool) -> Result<Vec<String>, String> {
     let mut v = stars(lib);
-    v.retain(|r| r != &rel);
-    if on {
-        v.push(rel);
+    for path in paths {
+        let rel = Path::new(path).strip_prefix(lib).map_err(err)?.to_string_lossy().to_string();
+        v.retain(|r| r != &rel);
+        if on {
+            v.push(rel);
+        }
     }
     fs::write(stars_file(Path::new(lib)), serde_json::to_vec(&v).map_err(err)?).map_err(err)?;
     Ok(v)

@@ -1,4 +1,5 @@
 // UI strings. Values are strings or functions of the arguments passed to t().
+// English is the reference and the fallback; other languages live in ui/lang/<code>.js.
 
 function ruPlural(n, one, few, many) {
   const m10 = n % 10, m100 = n % 100;
@@ -14,7 +15,6 @@ const STRINGS = {
     series: n => ruPlural(n, 'серия', 'серии', 'серий'),
     actions: n => ruPlural(n, 'действие', 'действия', 'действий'),
     units: ['КБ', 'МБ', 'ГБ'],
-    decimal: ',',
 
     nav_gallery: 'Галерея', nav_import: 'Импорт', nav_mindful: 'Отбор', nav_dupes: 'Дубли', nav_blurry: 'Смазанные', nav_review: 'На проверке',
     nav_stats: 'Статистика', nav_verify: 'Проверка карты', nav_settings: 'Настройки',
@@ -35,7 +35,7 @@ const STRINGS = {
     welcome_tag: 'Импорт с карты, отбор дублей и смазанных, проверка перед форматированием. Ничего не удаляется — лишнее откладывается в папки «на проверку».',
     welcome_lang: 'Язык', welcome_lib: 'Папка библиотеки',
     welcome_lib_sub: 'Сюда приложение раскладывает фото по дням и здесь же ищет дубли.',
-    welcome_go: 'Начать', change: 'Изменить…', reveal: 'Показать в Finder',
+    welcome_go: 'Начать', change: 'Изменить…', reveal: 'Показать в Finder', reveal_other: 'Показать в папке',
 
     import_title: 'Импорт с карты',
     import_sub: 'Новые кадры копируются в папки по дням съёмки, RAW — в соседнюю папку «… RAW». Каждая копия сверяется по контрольной сумме.',
@@ -119,6 +119,8 @@ const STRINGS = {
     g_empty: 'Здесь пока пусто', g_empty_stars: 'Отметьте понравившиеся кадры звёздочкой — клавиша F в просмотре.',
     v_star: 'В избранное (F)', v_unstar: 'Убрать из избранного (F)', v_reject: 'В отсев (⌫)', v_open: 'Открыть', v_close: 'Закрыть (Esc)',
     h_nav: 'листать', h_star: 'избранное', h_reject: 'в отсев', h_close: 'закрыть',
+    g_select: 'Выбрать', g_selected: n => `Выбрано: ${n}`, g_star_sel: 'В избранное', g_unstar_sel: 'Убрать из избранного',
+    g_reject_sel: 'В отсев', h_range: 'диапазон', h_one: 'по одному', h_all: 'выбрать все',
     stats_title: 'Статистика', stats_sub: 'Сводка по настройкам съёмки и типичным проблемам.',
     k_jpg: 'кадров JPG', k_iso: 'с ISO 3200+', k_vert: 'вертикальных', k_ends: 'на крайних фокусных зума',
     c_iso: 'ISO', c_shutter: 'Выдержка', c_aperture: 'Диафрагма', c_focal: 'Фокусное расстояние',
@@ -143,7 +145,6 @@ const STRINGS = {
     series: n => enPlural(n, 'burst', 'bursts'),
     actions: n => enPlural(n, 'action', 'actions'),
     units: ['KB', 'MB', 'GB'],
-    decimal: '.',
 
     nav_gallery: 'Gallery', nav_import: 'Import', nav_mindful: 'Cull', nav_dupes: 'Duplicates', nav_blurry: 'Blurry', nav_review: 'For review',
     nav_stats: 'Statistics', nav_verify: 'Verify card', nav_settings: 'Settings',
@@ -164,7 +165,7 @@ const STRINGS = {
     welcome_tag: 'Import from a memory card, cull duplicates and blurry shots, verify before formatting. Nothing is ever deleted — rejects go to “review” folders.',
     welcome_lang: 'Language', welcome_lib: 'Library folder',
     welcome_lib_sub: 'Photos are sorted into per-day folders here, and duplicates are searched here too.',
-    welcome_go: 'Get started', change: 'Change…', reveal: 'Show in Finder',
+    welcome_go: 'Get started', change: 'Change…', reveal: 'Show in Finder', reveal_other: 'Show in folder',
 
     import_title: 'Import from card',
     import_sub: 'New shots are copied into per-day folders, RAW files into a sibling “… RAW” folder. Every copy is verified by checksum.',
@@ -173,7 +174,7 @@ const STRINGS = {
     eject: 'Eject', ejected: n => `“${n}” ejected — safe to remove`,
     reading: n => `Reading “${n}”…`,
     k_on_card: n => `files on “${n}”`, k_already: 'already in the library', k_new: b => `new · ${b}`,
-    day_counts: (p, r, v, o) => [p && `${p} photos`, r && `${r} RAW`, v && `${v} videos`, o && `${o} other`].filter(Boolean).join(' · '),
+    day_counts: (p, r, v, o) => [p && enPlural(p, 'photo', 'photos'), r && `${r} RAW`, v && enPlural(v, 'video', 'videos'), o && `${o} other`].filter(Boolean).join(' · '),
     more: n => `+${n}`,
     mindful: 'Mindful import',
     mindful_sub: 'Right after copying, swipe through the new shots: → keep, ← to “rejects” together with the RAW.',
@@ -248,6 +249,8 @@ const STRINGS = {
     g_empty: 'Nothing here yet', g_empty_stars: 'Star the shots you like — press F in the viewer.',
     v_star: 'Add to favorites (F)', v_unstar: 'Remove from favorites (F)', v_reject: 'Reject (⌫)', v_open: 'Open', v_close: 'Close (Esc)',
     h_nav: 'browse', h_star: 'favorite', h_reject: 'reject', h_close: 'close',
+    g_select: 'Select', g_selected: n => `${n} selected`, g_star_sel: 'Add to favorites', g_unstar_sel: 'Remove from favorites',
+    g_reject_sel: 'Reject', h_range: 'range', h_one: 'one by one', h_all: 'select all',
     stats_title: 'Statistics', stats_sub: 'A summary of shooting settings and common problems.',
     k_jpg: 'JPG shots', k_iso: 'at ISO 3200+', k_vert: 'vertical', k_ends: 'at the zoom’s extremes',
     c_iso: 'ISO', c_shutter: 'Shutter speed', c_aperture: 'Aperture', c_focal: 'Focal length',

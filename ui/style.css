@@ -379,3 +379,14 @@ kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 4
 .v-nav.l { left: 10px; } .v-nav.r { right: 10px; }
 .btn.starred { color: var(--star); border-color: var(--star); }
 .btn.starred .ic { fill: currentColor; }
+
+/* gallery selection */
+.gck { position: absolute; left: 6px; top: 6px; width: 22px; height: 22px; border-radius: 50%; display: none; place-items: center;
+  border: 2px solid #fff; background: #0005; color: transparent; z-index: 2; pointer-events: none; }
+main.selecting .gck { display: grid; }
+.gt.sel .gck { background: var(--brand); border-color: var(--brand); color: #fff; }
+.gt.sel { outline: 3px solid var(--brand); outline-offset: -3px; }
+.gt.sel img { filter: brightness(.85); }
+.selbar { position: sticky; bottom: 0; margin: 8px -30px -30px; padding: 12px 30px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  background: var(--panel); border-top: 1px solid var(--line); box-shadow: 0 -8px 24px #0003; z-index: 6; }
+.btn.on { border-color: var(--brand); color: var(--brand); }
