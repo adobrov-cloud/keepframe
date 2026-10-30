@@ -133,6 +133,16 @@ async fn undo_last(library: String) -> Result<usize, String> {
 }
 
 #[tauri::command]
+async fn list_review(library: String) -> Result<Vec<review::ReviewItem>, String> {
+    blocking(move || Ok(review::list_review(&library))).await
+}
+
+#[tauri::command]
+async fn restore_from_review(library: String, paths: Vec<String>) -> Result<usize, String> {
+    blocking(move || review::restore(&library, paths)).await
+}
+
+#[tauri::command]
 fn undo_count(library: String) -> usize {
     review::undo_count(&library)
 }
@@ -159,7 +169,9 @@ pub fn run() {
             move_to_review,
             undo_last,
             undo_count,
-            review_dir
+            review_dir,
+            list_review,
+            restore_from_review
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -207,5 +219,14 @@ mod tests {
         println!("undo {back}");
         assert_eq!(n, back);
         assert!(Path::new(&r.path).exists());
+
+        crate::review::move_to_review(&lib, "смазанные", vec![r.path.clone()]).unwrap();
+        let items = crate::review::list_review(&lib);
+        println!("review list: {:?}", items.iter().map(|i| (&i.kind, &i.folder, &i.name, i.raws)).collect::<Vec<_>>());
+        assert_eq!(items.len(), 1);
+        let back = crate::review::restore(&lib, vec![items[0].path.clone()]).unwrap();
+        println!("restored {back}");
+        assert!(Path::new(&r.path).exists());
+        assert!(crate::review::list_review(&lib).is_empty());
     }
 }

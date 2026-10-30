@@ -1,12 +1,24 @@
 {
   "identifier": "default",
   "description": "Main window permissions",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "dialog:default",
     "opener:default",
     "opener:allow-reveal-item-in-dir",
-    "opener:allow-open-path"
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        {
+          "path": "$HOME/**"
+        },
+        {
+          "path": "/Volumes/**"
+        }
+      ]
+    }
   ]
 }

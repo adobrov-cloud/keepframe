@@ -9,5 +9,6 @@ window.__TAURI__={core:{invoke:async(c,a)=>{console.log('invoke',c,a);await new 
  case 'thumb':{let h=0;for(const ch of a.path)h=(h*31+ch.charCodeAt(0))|0;return 'thumbs/'+TH[Math.abs(h)%TH.length]}
  case 'verify_card':return {card_files:2036,card_bytes:47.2e9,matched:2036,missing:[],only_in_review:767,checksum_file:'/lib/.photo-sorter/checksums/card.sha256'};
  case 'undo_count':return 2;case 'review_dir':return '/lib/_на проверку ('+a.kind+')';case 'move_to_review':return a.paths.length;
+ case 'list_review':return Array.from({length:40},(_, i)=>({path:'/lib/_на проверку (дубли)/'+(i<25?'25 Oct':'10 Oct')+'/DSCF'+(1700+i)+'.JPG',kind:i<34?'дубли':'смазанные',folder:i<25?'25 Oct':'10 Oct',name:'DSCF'+(1700+i)+'.JPG',size:15e6,raws:i%2,raw_size:i%2?37e6:0}));case 'restore_from_review':return a.paths.length*2;
  case 'run_import':return {copied:561,skipped:0,bytes:13.2e9,failed:[],folders:['24 Oct','25 Oct']};}}, convertFileSrc:p=>p},
  event:{listen:async(n,f)=>{listeners.push(f)}},dialog:{open:async()=>null},opener:{revealItemInDir:async()=>{}}};

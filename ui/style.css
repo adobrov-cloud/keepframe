@@ -182,3 +182,33 @@ kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 4
 #toast[hidden] { display: none; }
 .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--mut); border-top-color: transparent; border-radius: 50%; animation: sp 1s linear infinite; vertical-align: -2px; }
 @keyframes sp { to { transform: rotate(360deg); } }
+
+/* ---------- swipe ---------- */
+.tinder { flex: 1; position: relative; min-height: 0; display: flex; align-items: center; justify-content: center; }
+.tcard {
+  position: absolute; inset: 0; margin: auto; display: flex; align-items: center; justify-content: center;
+  cursor: grab; touch-action: none; will-change: transform;
+}
+.tcard:active { cursor: grabbing; }
+.tcard img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 10px; display: block; background: #0b0c0e;
+  box-shadow: 0 12px 40px #000a; pointer-events: none; outline: 4px solid transparent; outline-offset: -4px; transition: outline-color .1s; }
+.tcard.under { transform: scale(.94); opacity: .35; pointer-events: none; }
+.tcard.go-out img { outline-color: var(--bad); }
+.tcard.go-keep img { outline-color: var(--ok); }
+.stamp { position: absolute; top: 28px; padding: 6px 14px; border: 3px solid; border-radius: 8px; font-weight: 800; font-size: 22px;
+  letter-spacing: 1px; opacity: 0; transition: opacity .1s; background: #000a; pointer-events: none; }
+.s-out { right: 28px; color: var(--bad); transform: rotate(12deg); }
+.s-keep { left: 28px; color: var(--ok); transform: rotate(-12deg); }
+.go-out .s-out, .go-keep .s-keep { opacity: 1; }
+.tcard .fname { bottom: 12px; left: 50%; transform: translateX(-50%); white-space: nowrap; font-size: 12px; }
+.tbtns { display: flex; justify-content: center; gap: 22px; padding-top: 14px; }
+.round { width: 58px; height: 58px; border-radius: 50%; border: 2px solid var(--line); background: var(--panel); color: var(--fg);
+  font-size: 22px; cursor: pointer; transition: transform .1s, background .1s; }
+.round:hover:not(:disabled) { transform: scale(1.08); }
+.round:disabled { opacity: .35; cursor: default; }
+.round.bad { color: var(--bad); border-color: #5a2a2e; }
+.round.ok { color: var(--ok); border-color: #275a3a; }
+.round.bad:hover { background: #2a1517; }
+.round.ok:hover { background: #14261b; }
+.cell.back { outline-color: var(--ok); }
+.cell.back .tag { background: var(--ok); color: #000; }

@@ -18,7 +18,8 @@ const state = {
   recs: null,          // analysis records for the library
   scope: { dupes: '*', blurry: '*', stats: '*' },
   dupes: { groups: [], i: 0, keep: {} },
-  blurry: { items: [], out: new Set() },
+  blurry: { items: [], i: 0, dec: new Map(), kept: new Set() },
+  review: { items: null, kind: null, folder: '*', sel: new Set() },
   busy: false,
 };
 
@@ -393,38 +394,145 @@ function findBlurry(recs) {
   const by = {};
   recs.forEach(r => (by[r.folder] ||= []).push(r.sharp));
   for (const [f, v] of Object.entries(by)) { v.sort((a, b) => a - b); med[f] = v[Math.floor(v.length / 2)]; }
-  return recs.filter(r => r.sharp < p15 && r.sharp < 0.35 * med[r.folder]).sort((a, b) => a.sharp - b.sharp);
+  return recs
+    .filter(r => r.sharp < p15 && r.sharp < 0.35 * med[r.folder])
+    .sort((a, b) => a.sharp - b.sharp)
+    .map(r => ({ ...r, rel: r.sharp / med[r.folder] }));
+}
+
+// Frames the user swiped right on stay hidden from later passes.
+const keptKey = () => 'blurry-kept:' + state.lib;
+function loadKept() {
+  try { return new Set(JSON.parse(localStorage.getItem(keptKey()) || '[]')); } catch { return new Set(); }
+}
+function saveKept(set) {
+  try { localStorage.setItem(keptKey(), JSON.stringify([...set])); } catch {}
+}
+
+function blurryOut() {
+  return [...state.blurry.dec].filter(([, d]) => d === 'out').map(([p]) => p);
 }
 
 function viewBlurry(main) {
-  const title = 'Смазанные', sub = 'Кадры, которые заметно мягче остальных в своей папке. Иногда это просто размытый фон — проверьте глазами.';
+  const title = 'Смазанные', sub = 'Кадры, которые заметно мягче остальных в своей папке. Иногда это просто размытый фон — решайте глазами.';
   if (!state.recs) return needAnalysis(main, title, sub);
   const B = state.blurry;
   if (B.scope !== state.scope.blurry || B.stale) {
-    B.items = findBlurry(scoped(state.scope.blurry));
-    B.out = new Set(B.items.map(r => r.path));
+    B.kept = loadKept();
+    const found = findBlurry(scoped(state.scope.blurry));
+    B.hidden = found.filter(r => B.kept.has(r.path)).length;
+    B.items = found.filter(r => !B.kept.has(r.path));
+    B.i = 0;
+    B.dec = new Map();
     B.scope = state.scope.blurry;
     B.stale = false;
   }
-  main.innerHTML = `<h1>${title}</h1><p class="sub">${sub} Красная рамка — уйдёт в «_на проверку (смазанные)», клик снимает отметку.</p>
-    <div class="row" style="margin-bottom:16px">${scopeSelect('scope', state.scope.blurry)}
-      <span class="mut">${shots(B.items.length)} под подозрением</span><span class="grow"></span>
-      <button class="btn" id="none">Снять все</button>
-      <button class="btn primary" id="apply" ${B.out.size && !state.busy ? '' : 'disabled'}>Убрать ${shots(B.out.size)} в проверку</button></div>
-    ${B.items.length ? `<div class="grid">${B.items.map(r => `
-      <div class="cell ${B.out.has(r.path) ? 'out' : ''}" data-path="${esc(r.path)}">
-        <img data-path="${esc(r.path)}" alt=""><span class="tag">${B.out.has(r.path) ? 'в проверку' : 'оставить'}</span>
-        <span class="fname">${esc(r.folder)} · ${esc(r.name)}</span></div>`).join('')}</div>
-      <div class="rv-foot"><span>Наведите и удерживайте <kbd>Z</kbd>, чтобы посмотреть на весь экран</span></div>`
-      : '<div class="empty"><div class="big">✓</div><h2>Смазанных кадров не найдено</h2></div>'}`;
-  fillThumbs(main, 640);
-  $('#scope', main).onchange = e => { state.scope.blurry = e.target.value; render(); };
-  $('#none', main).onclick = () => { B.out.clear(); render(); };
-  $('#apply', main).onclick = () => applyMoves('смазанные', [...B.out]);
-  main.querySelectorAll('.cell').forEach(el => {
-    el.onclick = () => { const p = el.dataset.path; B.out.has(p) ? B.out.delete(p) : B.out.add(p); render(); };
-    el.onmouseenter = () => (hoverPath = el.dataset.path);
-  });
+  const out = blurryOut().length, kept = B.dec.size - out;
+  const head = `<div class="rv-head">${scopeSelect('scope', state.scope.blurry)}
+      ${B.i < B.items.length ? `<b>Кадр ${B.i + 1} из ${B.items.length}</b>` : ''}
+      <span class="mut"><span style="color:var(--bad)">✕ ${out}</span> · <span style="color:var(--ok)">✓ ${kept}</span></span>
+      <span class="grow"></span>
+      ${B.hidden ? `<button class="link small" id="reset">показать ещё ${shots(B.hidden)}, которые вы оставили раньше</button>` : ''}
+      ${B.i < B.items.length && out ? `<button class="btn" id="apply">Применить сейчас (${out})</button>` : ''}</div>`;
+  const bind = () => {
+    $('#scope', main).onchange = e => { state.scope.blurry = e.target.value; render(); };
+    const r = $('#reset', main);
+    if (r) r.onclick = () => { saveKept(new Set()); B.stale = true; render(); };
+    const a = $('#apply', main);
+    if (a) a.onclick = applyBlurry;
+  };
+
+  if (!B.items.length) {
+    main.innerHTML = `<h1>${title}</h1>${head}<div class="empty"><div class="big">✓</div><h2>Смазанных кадров не найдено</h2></div>`;
+    return bind();
+  }
+  main.classList.add('fill');
+
+  if (B.i >= B.items.length) {
+    main.innerHTML = `${head}<div class="empty"><div class="big">🎉</div><h2>Всё просмотрено</h2>
+      <p>${out ? `${shots(out)} уйдут в «_на проверку (смазанные)», ${shots(kept)} остаются.` : 'Вы всё оставили — переносить нечего.'}</p>
+      <div class="row" style="justify-content:center;margin-top:16px">
+        <button class="btn" id="back1">← Вернуться к последнему</button>
+        ${out ? `<button class="btn primary" id="done" ${state.busy ? 'disabled' : ''}>Убрать ${shots(out)} в проверку</button>` : `<button class="btn primary" id="done">Готово</button>`}
+      </div></div>`;
+    bind();
+    $('#back1', main).onclick = () => blurryBack();
+    $('#done', main).onclick = applyBlurry;
+    return;
+  }
+
+  const r = B.items[B.i], nx = B.items[B.i + 1];
+  hoverPath = r.path;
+  main.innerHTML = `${head}
+    <div class="tinder">
+      ${nx ? `<div class="tcard under"><img data-path="${esc(nx.path)}" alt=""></div>` : ''}
+      <div class="tcard" id="tcard">
+        <img data-path="${esc(r.path)}" alt="">
+        <span class="stamp s-out">В ПРОВЕРКУ</span><span class="stamp s-keep">ОСТАВИТЬ</span>
+        <span class="fname">${esc(r.folder)} · ${esc(r.name)} · резкость ${Math.round(r.rel * 100)}% от обычной для папки</span>
+      </div>
+    </div>
+    <div class="tbtns">
+      <button class="round bad" id="no" title="В проверку (←)">✕</button>
+      <button class="round" id="undo1" title="Вернуть предыдущий (Backspace)" ${B.i ? '' : 'disabled'}>↶</button>
+      <button class="round ok" id="yes" title="Оставить (→)">✓</button>
+    </div>
+    <div class="rv-foot" style="justify-content:center"><span><kbd>←</kbd> в проверку</span><span><kbd>→</kbd> оставить</span>
+      <span><kbd>⌫</kbd> вернуть предыдущий</span><span><kbd>Z</kbd> удерживать — на весь экран</span><span>можно тянуть карточку мышью</span></div>`;
+  bind();
+  fillThumbs(main, 1400);
+  B.items.slice(B.i + 2, B.i + 5).forEach(x => thumb(x.path, 1400));
+  $('#no', main).onclick = () => blurryDecide('out');
+  $('#yes', main).onclick = () => blurryDecide('keep');
+  $('#undo1', main).onclick = () => blurryBack();
+  dragCard($('#tcard', main));
+}
+
+let flying = false;
+function blurryDecide(d) {
+  const B = state.blurry, card = $('#tcard');
+  if (flying || !card || B.i >= B.items.length) return;
+  B.dec.set(B.items[B.i].path, d);
+  flying = true;
+  card.style.transition = 'transform .22s ease-in, opacity .22s';
+  card.style.transform = `translateX(${d === 'out' ? -130 : 130}%) rotate(${d === 'out' ? -18 : 18}deg)`;
+  card.style.opacity = '0';
+  card.classList.add(d === 'out' ? 'go-out' : 'go-keep');
+  setTimeout(() => { flying = false; B.i++; render(); }, 200);
+}
+function blurryBack() {
+  const B = state.blurry;
+  if (flying || !B.i) return;
+  B.i--;
+  B.dec.delete(B.items[B.i].path);
+  render();
+}
+function dragCard(card) {
+  let x0 = null, dx = 0;
+  card.onpointerdown = e => { x0 = e.clientX; dx = 0; card.setPointerCapture(e.pointerId); card.style.transition = 'none'; };
+  card.onpointermove = e => {
+    if (x0 === null) return;
+    dx = e.clientX - x0;
+    card.style.transform = `translateX(${dx}px) rotate(${dx / 25}deg)`;
+    card.classList.toggle('go-out', dx < -40);
+    card.classList.toggle('go-keep', dx > 40);
+  };
+  card.onpointerup = card.onpointercancel = () => {
+    if (x0 === null) return;
+    x0 = null;
+    if (Math.abs(dx) > 120) return blurryDecide(dx < 0 ? 'out' : 'keep');
+    card.style.transition = 'transform .18s';
+    card.style.transform = '';
+    card.classList.remove('go-out', 'go-keep');
+  };
+}
+function applyBlurry() {
+  const B = state.blurry;
+  const keptNow = [...B.dec].filter(([, d]) => d === 'keep').map(([p]) => p);
+  if (keptNow.length) { keptNow.forEach(p => B.kept.add(p)); saveKept(B.kept); }
+  const out = blurryOut();
+  if (!out.length) { B.stale = true; return render(); }
+  return applyMoves('смазанные', out);
 }
 
 // ---------- moves ----------
@@ -437,6 +545,7 @@ function applyMoves(kind, paths) {
     state.recs = state.recs.filter(r => !gone.has(r.path));
     state.dupes.groups = [];
     state.blurry.stale = true;
+    state.review.items = null;
     const dir = await invoke('review_dir', { library: state.lib, kind });
     const t = toast(`Перенесено ${files(n)} в «${esc(dir.split(/[\\/]/).pop())}» <button class="btn" id="tReveal">Показать</button><button class="btn" id="tUndo">Отменить</button>`, 12000);
     $('#tReveal', t).onclick = () => opener.revealItemInDir(dir);
@@ -449,10 +558,110 @@ function undo() {
   return task('undo', 'Возвращаю…', async () => {
     const n = await invoke('undo_last', { library: state.lib });
     state.recs = null;
+    state.review.items = null;
     state.dupes.groups = [];
     state.blurry.stale = true;
     toast(`Возвращено ${files(n)}`);
     await invoke('analyze', { library: state.lib }).then(r => (state.recs = r));
+  });
+}
+
+// ---------- review folders ----------
+
+function lazyThumbs(root, size) {
+  const io = new IntersectionObserver(es => es.forEach(e => {
+    if (!e.isIntersecting) return;
+    io.unobserve(e.target);
+    thumb(e.target.dataset.path, size).then(src => { if (src) e.target.src = src; });
+  }), { root: $('#main'), rootMargin: '400px' });
+  root.querySelectorAll('img[data-path]').forEach(img => io.observe(img));
+}
+
+async function loadReview() {
+  state.review.items = await invoke('list_review', { library: state.lib });
+  state.review.sel.clear();
+}
+
+async function viewReview(main) {
+  const R = state.review;
+  const title = 'На проверке', sub = 'Сюда приложение откладывает кадры вместо удаления. Посмотрите и верните нужное; когда уверены, что остальное не нужно, — удалите папку в Finder.';
+  if (!R.items) {
+    main.innerHTML = `<h1>${title}</h1><p class="sub">${sub}</p><div class="empty"><span class="spin"></span></div>`;
+    try { await loadReview(); } catch (e) { return showError(e); }
+    if (state.view !== 'review') return;
+  }
+  const kinds = [...new Set(R.items.map(i => i.kind))];
+  if (!kinds.length) {
+    main.innerHTML = `<h1>${title}</h1><p class="sub">${sub}</p><div class="empty"><div class="big">✓</div><h2>Папки проверки пусты</h2></div>`;
+    return;
+  }
+  if (!kinds.includes(R.kind)) { R.kind = kinds[0]; R.folder = '*'; }
+  const ofKind = R.items.filter(i => i.kind === R.kind);
+  const fl = [...new Set(ofKind.map(i => i.folder))].sort((a, b) => a.localeCompare(b, 'ru', { numeric: true }));
+  if (R.folder !== '*' && !fl.includes(R.folder)) R.folder = '*';
+  const shown = ofKind.filter(i => R.folder === '*' || i.folder === R.folder);
+  const sum = a => a.reduce((t, i) => t + i.size + i.raw_size, 0);
+  const sel = [...R.sel].filter(p => ofKind.some(i => i.path === p));
+  main.innerHTML = `<h1>${title}</h1><p class="sub">${sub}</p>
+    <div class="chips">${kinds.map(k => {
+      const a = R.items.filter(i => i.kind === k);
+      return `<div class="chip ${k === R.kind ? 'on' : ''}" data-kind="${esc(k)}">${esc(k)} · ${shots(a.length)} · ${gb(sum(a))}</div>`;
+    }).join('')}</div>
+    <div class="row" style="margin-bottom:16px">
+      <select id="rfolder"><option value="*">Все папки (${ofKind.length})</option>${fl.map(f =>
+        `<option value="${esc(f)}" ${f === R.folder ? 'selected' : ''}>${esc(f)} (${ofKind.filter(i => i.folder === f).length})</option>`).join('')}</select>
+      <span class="mut">${gb(sum(shown))} вместе с RAW</span><span class="grow"></span>
+      <button class="btn" id="rall">${shown.every(i => R.sel.has(i.path)) ? 'Снять выделение' : 'Выбрать все'}</button>
+      <button class="btn" id="rshow">Показать в Finder</button>
+      <button class="btn primary" id="rback" ${sel.length && !state.busy ? '' : 'disabled'}>Вернуть ${shots(sel.length)} в библиотеку</button>
+    </div>
+    <div class="grid">${shown.map(i => `
+      <div class="cell ${R.sel.has(i.path) ? 'back' : ''}" data-path="${esc(i.path)}">
+        <img data-path="${esc(i.path)}" alt=""><span class="tag">${R.sel.has(i.path) ? '↩ вернуть' : esc(i.folder)}</span>
+        <span class="fname">${esc(i.name)}${i.raws ? ' + RAW' : ''}</span></div>`).join('')}</div>
+    <div class="rv-foot"><span><kbd>клик</kbd> выбрать для возврата</span><span><kbd>двойной клик</kbd> открыть в Просмотре</span>
+      <span>наведите и удерживайте <kbd>Z</kbd> — на весь экран</span></div>`;
+  lazyThumbs(main, 640);
+  main.querySelectorAll('.chip[data-kind]').forEach(c => (c.onclick = () => { R.kind = c.dataset.kind; R.folder = '*'; render(); }));
+  $('#rfolder', main).onchange = e => { R.folder = e.target.value; render(); };
+  $('#rall', main).onclick = () => {
+    const all = shown.every(i => R.sel.has(i.path));
+    shown.forEach(i => (all ? R.sel.delete(i.path) : R.sel.add(i.path)));
+    render();
+  };
+  $('#rshow', main).onclick = async () => {
+    const dir = await invoke('review_dir', { library: state.lib, kind: R.kind });
+    opener.revealItemInDir(R.folder === '*' ? dir : dir + '/' + R.folder);
+  };
+  $('#rback', main).onclick = () => restoreSelected([...R.sel].filter(p => ofKind.some(i => i.path === p)));
+  main.querySelectorAll('.cell').forEach(el => {
+    const p = el.dataset.path;
+    el.onclick = () => {
+      R.sel.has(p) ? R.sel.delete(p) : R.sel.add(p);
+      const on = R.sel.has(p);
+      el.classList.toggle('back', on);
+      el.querySelector('.tag').textContent = on ? '↩ вернуть' : R.items.find(i => i.path === p).folder;
+      const n = [...R.sel].filter(q => ofKind.some(i => i.path === q)).length;
+      const b = $('#rback', main);
+      b.textContent = `Вернуть ${shots(n)} в библиотеку`;
+      b.disabled = !n || state.busy;
+    };
+    el.ondblclick = () => opener.openPath(p);
+    el.onmouseenter = () => (hoverPath = p);
+  });
+}
+
+function restoreSelected(paths) {
+  if (!paths.length) return;
+  return task('restore', 'Возвращаю в библиотеку…', async () => {
+    const n = await invoke('restore_from_review', { library: state.lib, paths });
+    await loadReview();
+    const t = toast(`Возвращено ${files(n)} на свои места <button class="btn" id="tUndo">Отменить</button>`, 12000);
+    $('#tUndo', t).onclick = undo;
+    render();
+    state.dupes.groups = [];
+    state.blurry.stale = true;
+    if (state.recs) state.recs = await invoke('analyze', { library: state.lib });
   });
 }
 
@@ -558,6 +767,7 @@ function setLib(lib) {
     state.plan = null;
     state.dupes.groups = [];
     state.blurry.stale = true;
+    state.review.items = null;
   }
   state.lib = lib;
   $('#lib').textContent = lib;
@@ -566,7 +776,7 @@ function setLib(lib) {
 
 // ---------- routing & keys ----------
 
-const views = { import: viewImport, verify: viewVerify, dupes: viewDupes, blurry: viewBlurry, stats: viewStats, settings: viewSettings };
+const views = { import: viewImport, verify: viewVerify, dupes: viewDupes, blurry: viewBlurry, review: viewReview, stats: viewStats, settings: viewSettings };
 function render() {
   const main = $('#main');
   main.classList.remove('fill');
@@ -585,12 +795,17 @@ let hoverPath = null;
 addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey || e.target.tagName === 'SELECT') return;
   const k = e.key.toLowerCase();
-  if ((k === 'z' || k === 'я') && hoverPath && !e.repeat && ['dupes', 'blurry'].includes(state.view)) {
+  if ((k === 'z' || k === 'я') && hoverPath && !e.repeat && ['dupes', 'blurry', 'review'].includes(state.view)) {
     const z = $('#zoom');
     z.querySelector('img').src = '';
     thumb(hoverPath, 2400).then(src => (z.querySelector('img').src = src));
     z.hidden = false;
     return;
+  }
+  if (state.view === 'blurry' && state.blurry.items?.length) {
+    if (k === 'arrowleft') { e.preventDefault(); blurryDecide('out'); }
+    else if (k === 'arrowright') { e.preventDefault(); blurryDecide('keep'); }
+    else if (k === 'backspace' || k === 'arrowup') { e.preventDefault(); blurryBack(); }
   }
   if (state.view === 'dupes' && state.dupes.groups.length) {
     if (k === 'arrowright' || k === ' ') { e.preventDefault(); stepDupes(1); }

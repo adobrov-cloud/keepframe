@@ -91,3 +91,114 @@ pub fn undo_last(lib: &str) -> Result<usize, String> {
 pub fn undo_count(lib: &str) -> usize {
     load(Path::new(lib)).batches.len()
 }
+
+#[derive(Serialize)]
+pub struct ReviewItem {
+    pub path: String,
+    pub kind: String,
+    /// Library folder the photo came from.
+    pub folder: String,
+    pub name: String,
+    pub size: u64,
+    /// RAW files waiting next to it in "<folder> RAW".
+    pub raws: u32,
+    pub raw_size: u64,
+}
+
+fn review_roots(lib: &Path) -> Vec<(String, PathBuf)> {
+    let Ok(rd) = fs::read_dir(lib) else { return vec![] };
+    let mut v: Vec<_> = rd
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| {
+            let n = e.file_name().to_string_lossy().to_string();
+            let kind = n.strip_prefix(REVIEW_PREFIX)?.trim().trim_start_matches('(').trim_end_matches(')').to_string();
+            Some((kind, e.path()))
+        })
+        .collect();
+    v.sort();
+    v
+}
+
+fn raws_for(dir: &Path, st: &str) -> Vec<PathBuf> {
+    fs::read_dir(dir)
+        .map(|rd| rd.flatten().map(|e| e.path()).filter(|q| is_raw(q) && stem(q) == st).collect())
+        .unwrap_or_default()
+}
+
+fn raw_sibling(dir: &Path) -> PathBuf {
+    dir.with_file_name(format!("{} RAW", dir.file_name().map(|s| s.to_string_lossy()).unwrap_or_default()))
+}
+
+/// Everything sitting in "_на проверку (…)" folders, photos and videos first-class, RAWs attached to their JPG.
+pub fn list_review(lib: &str) -> Vec<ReviewItem> {
+    let lib = Path::new(lib);
+    let mut out = vec![];
+    for (kind, root) in review_roots(lib) {
+        for p in walk_media(&root, true) {
+            if is_raw(&p) {
+                continue;
+            }
+            let Ok(rel) = p.strip_prefix(&root) else { continue };
+            let parent = p.parent().unwrap();
+            let raws = raws_for(&raw_sibling(parent), &stem(&p));
+            out.push(ReviewItem {
+                path: p.to_string_lossy().into(),
+                kind: kind.clone(),
+                folder: rel.parent().map(|r| r.to_string_lossy().to_string()).unwrap_or_default(),
+                name: p.file_name().unwrap().to_string_lossy().into(),
+                size: fs::metadata(&p).map(|m| m.len()).unwrap_or(0),
+                raws: raws.len() as u32,
+                raw_size: raws.iter().filter_map(|q| fs::metadata(q).ok()).map(|m| m.len()).sum(),
+            });
+        }
+    }
+    out
+}
+
+/// Library folder for a review-relative folder; tolerates names that differ only by surrounding spaces.
+fn lib_folder(lib: &Path, rel: &Path) -> PathBuf {
+    let direct = lib.join(rel);
+    if direct.exists() || rel.components().count() != 1 {
+        return direct;
+    }
+    let want = rel.to_string_lossy().trim().to_string();
+    fs::read_dir(lib)
+        .ok()
+        .and_then(|rd| rd.flatten().find(|e| e.path().is_dir() && e.file_name().to_string_lossy().trim() == want))
+        .map(|e| e.path())
+        .unwrap_or(direct)
+}
+
+/// Move photos (and their RAWs) from review folders back to where they came from. Undoable.
+pub fn restore(lib: &str, paths: Vec<String>) -> Result<usize, String> {
+    let lib = Path::new(lib);
+    let roots = review_roots(lib);
+    let mut batch: Batch = vec![];
+    for p in paths {
+        let src = PathBuf::from(&p);
+        let Some((_, root)) = roots.iter().find(|(_, r)| src.starts_with(r)) else { continue };
+        let rel_dir = src.parent().unwrap().strip_prefix(root).map_err(err)?.to_path_buf();
+        let dest_dir = lib_folder(lib, &rel_dir);
+        let mut pairs = vec![(src.clone(), dest_dir.clone())];
+        for q in raws_for(&raw_sibling(src.parent().unwrap()), &stem(&src)) {
+            pairs.push((q, raw_sibling(&dest_dir)));
+        }
+        for (from, dir) in pairs {
+            if !from.exists() {
+                continue;
+            }
+            fs::create_dir_all(&dir).map_err(err)?;
+            let to = free_path(&dir, &from.file_name().unwrap().to_string_lossy());
+            fs::rename(&from, &to).map_err(err)?;
+            batch.push((from.to_string_lossy().into(), to.to_string_lossy().into()));
+        }
+    }
+    let n = batch.len();
+    if n > 0 {
+        let mut j = load(lib);
+        j.batches.push(batch);
+        save(lib, &j)?;
+    }
+    Ok(n)
+}
