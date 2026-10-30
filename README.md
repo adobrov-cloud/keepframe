@@ -40,6 +40,12 @@ Nothing is ever deleted. Rejected shots go to `_review (…)` folders next to yo
 
 **💾 Before formatting the card.** *Verify card* hashes every file on the card — including videos the camera keeps outside `DCIM` and formats the app doesn't know — and lists anything missing. A checksum file is saved with the library.
 
+**🗄 Two copies before formatting.** Point Keepframe at an external drive or NAS and every import goes there too, verified by checksum. *Verify card* then checks the backup as well, and one button brings the backup up to date with the whole library.
+
+**⭐ Working with Lightroom or Capture One.** Ratings 1–5 and colour labels (keys 1–5 and 6–9, as in Lightroom) are written to XMP sidecars next to the RAW, so the other app sees your picks. Your photos are never modified.
+
+**🕑 Camera clock was off.** Set the offset at import, or select shots later and shift their time: shots move to the right day folder together with their RAW, and the corrected time goes into the sidecar. Undo works as for any move.
+
 **📷 Any camera.** JPG, HEIF and RAW from Fujifilm, Canon, Nikon, Sony, Olympus, Panasonic, Pentax, Leica, Hasselblad, Sigma, GoPro, DJI… RAW-only shooters get the full experience too: the app uses the full-size preview every camera embeds in its RAW files.
 
 ## Features
@@ -100,6 +106,7 @@ Nothing is ever deleted. Rejected shots go to `_review (…)` folders next to yo
 | 1–9 | — | keep / reject shot N | — |
 | I | shot info | — | shot info |
 | F | — | — | favourite |
+| 1–5, 0 / 6–9 | — | — | rating / colour label (also for a gallery selection) |
 | Z (hold) | full screen | full screen | — |
 | Esc | reset zoom | reset zoom | close |
 
@@ -158,7 +165,6 @@ cd src-tauri && PS_CARD=/path/to/card PS_LIB=/tmp/lib cargo test --release -- --
 
 ## Roadmap
 
-- Backup to an external drive or NAS with the same checksum verification
 - “RAW only for the best”: free space by setting aside RAW files of shots you didn't star
 - Export resized copies for messengers and AirDrop
 - Slideshow, calendar, search by camera or lens

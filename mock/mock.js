@@ -7,19 +7,19 @@ RECS.forEach((r,i)=>{r.sharp_u=((i*7)%4+.5)/4;r.sharp_v=((i*3)%4+.5)/4;});
 // Neighbouring frame numbers get look-alike pictures (the demo images come in similar pairs), so bursts read as bursts.
 const thumbOf=p=>{const m=p.match(/(\d{3,})\.\w+$/);if(m){const n=+m[1];return 'thumbs/'+TH[(Math.floor(n/4)*2+(n%2))%TH.length]}let h=0;for(const ch of p)h=(h*31+ch.charCodeAt(0))|0;return 'thumbs/'+TH[Math.abs(h)%TH.length]};
 const REVIEW=Array.from({length:40},(_, i)=>{const d=i<34?'_на проверку (дубли)':'_review (blurry)';return {path:'/lib/'+d+'/'+(i<25?'25 Oct':'10 Oct')+'/DSCF'+(1700+i)+'.JPG',kind:i<34?'дубли':'blurry',dir:d,folder:i<25?'25 Oct':'10 Oct',name:'DSCF'+(1700+i)+'.JPG',size:15e6,raws:i%2,raw_size:i%2?37e6:0}});
-const STARS=new Set();
+const STARS=new Set();let BACKUP=null;const META={};
 window.__TAURI__={core:{invoke:async(c,a)=>{console.log('invoke',c,a);await new Promise(r=>setTimeout(r,250));
- switch(c){case 'get_settings':return {library:'/Users/me/Pictures/Photos'};case 'set_library':return {library:a.library};
+ switch(c){case 'get_settings':return {library:'/Users/me/Pictures/Photos',backup:BACKUP};case 'set_backup':BACKUP=a.backup;return {library:'/Users/me/Pictures/Photos',backup:BACKUP};case 'backup_sync':return {copied:42,skipped:1586,bytes:6.4e8,failed:[]};case 'get_meta':return META;case 'set_meta':{for(const p of a.paths){const r=p.replace('/Users/me/Pictures/Photos/','');const m=META[r]||(META[r]={rating:0,label:'',shift:0});if(a.rating!=null)m.rating=a.rating;if(a.label!=null)m.label=a.label}return {...META}}case 'shift_time':{for(const p of a.paths){const r=p.replace('/Users/me/Pictures/Photos/','');const m=META[r]||(META[r]={rating:0,label:'',shift:0});m.shift+=a.seconds}return a.paths.length*2}case 'set_library':return {library:a.library};
  case 'list_cards':return [{path:'/Volumes/Untitled',name:'Untitled'}];
  case 'card_info':return {total:128e9,free:80.8e9};case 'eject_card':return null;
  case 'photo_info':return {model:'X-S20',lens:'XC15-45',iso:800,f:4,t:1/125,fl:23,ev:-0.3};
  case 'scan_import':for(const l of ['@scan_card','@scan_lib']){listeners.forEach(f=>f({payload:{task:'scan',done:0,total:0,label:l}}));await new Promise(r=>setTimeout(r,150))}return plan;
  case 'analyze':for(let i=1;i<=10;i++){listeners.forEach(f=>f({payload:{task:'analyze',done:i*160,total:1600,label:'@analyze'}}));await new Promise(r=>setTimeout(r,80))}return RECS;
  case 'thumb':return thumbOf(a.path);
- case 'verify_card':return {card_files:2036,card_bytes:47.2e9,matched:2036,missing:[],only_in_review:767,checksum_file:'/lib/.photo-sorter/checksums/card.sha256'};
+ case 'verify_card':return {card_files:2036,card_bytes:47.2e9,matched:2036,missing:[],only_in_review:767,checksum_file:'/lib/.photo-sorter/checksums/card.sha256',backup:BACKUP?{path:BACKUP,unavailable:false,matched:2036,missing:[]}:null};
  case 'undo_count':return 2;case 'review_dir':return '/lib/'+a.folder;case 'move_to_review':return a.paths.length*2;
  case 'list_review':return REVIEW;case 'list_videos':return [{path:'/lib/25 Oct/DSCF1799.MOV',folder:'25 Oct',name:'DSCF1799.MOV',size:2e8,mtime:1793260000}];case 'get_stars':return [...STARS];case 'set_stars':{for(const p of a.paths){const r=p.replace('/Users/me/Pictures/Photos/','');a.on?STARS.add(r):STARS.delete(r)}return [...STARS]}case 'restore_from_review':return a.paths.length*2;
- case 'run_import':return {copied:561,skipped:0,bytes:13.2e9,failed:[],folders:['24 Oct','25 Oct'],photos:Array.from({length:12},(_, i)=>'/lib/25 Oct/DSCF'+(1800+i)+'.JPG')};}},
+ case 'run_import':return {copied:561,skipped:0,bytes:13.2e9,failed:[],backup:BACKUP,backup_copied:561,backup_failed:[],backup_unavailable:false,folders:['24 Oct','25 Oct'],photos:Array.from({length:12},(_, i)=>'/lib/25 Oct/DSCF'+(1800+i)+'.JPG')};}},
  convertFileSrc:p=>p.startsWith('thumbs/')?p:thumbOf(p)},
  event:{listen:async(n,f)=>{listeners.push(f)}},dialog:{open:async()=>null},opener:{revealItemInDir:async()=>{},openPath:async()=>{}}};
 
@@ -34,6 +34,8 @@ window.__TAURI__={core:{invoke:async(c,a)=>{console.log('invoke',c,a);await new 
   localStorage.setItem('mindful', '1');
   if (scene !== 'welcome') localStorage.setItem('onboarded', '1');
   RECS.slice(0, 40).forEach((r, i) => i % 7 === 0 && STARS.add(r.path));
+  RECS.slice(0, 60).forEach((r, i) => { if (i % 3 === 0) META[r.path] = { rating: 1 + (i * 7) % 5, label: ['', 'Red', '', 'Green', 'Blue', '', 'Yellow'][i % 7], shift: 0 }; });
+  BACKUP = '/Volumes/Backup/Photos';
   // No macOS vibrancy in a browser: draw the sidebar solid.
   addEventListener('DOMContentLoaded', () => {
     document.documentElement.classList.remove('mac');

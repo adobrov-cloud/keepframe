@@ -23,6 +23,25 @@ fn save(lib: &Path, j: &Journal) -> Result<(), String> {
     fs::write(journal_file(lib), serde_json::to_vec(j).map_err(err)?).map_err(err)
 }
 
+/// Append one undoable batch of moves to the journal.
+pub fn record(lib: &Path, batch: Batch) -> Result<(), String> {
+    if batch.is_empty() {
+        return Ok(());
+    }
+    let mut j = load(lib);
+    j.batches.push(batch);
+    save(lib, &j)
+}
+
+/// Move a file and let its rating/label/favourite follow.
+fn move_file(lib: &Path, from: &Path, dir: &Path) -> Result<PathBuf, String> {
+    fs::create_dir_all(dir).map_err(err)?;
+    let to = free_path(dir, &from.file_name().unwrap().to_string_lossy());
+    fs::rename(from, &to).map_err(err)?;
+    crate::meta::rekey(lib, from, &to);
+    Ok(to)
+}
+
 pub fn review_dir(lib: &Path, folder: &str) -> Result<PathBuf, String> {
     if !is_review_name(folder) || folder.contains(['/', '\\']) {
         return Err(format!("not a review folder: {folder}"));
@@ -44,11 +63,15 @@ pub fn move_to_review(lib: &str, folder: &str, paths: Vec<String>) -> Result<usi
         let raw_dir_name = format!("{} RAW", parent_rel.file_name().map(|s| s.to_string_lossy()).unwrap_or_default());
         let raw_rel = parent_rel.with_file_name(&raw_dir_name);
         let st = stem(&src);
-        if let Ok(rd) = fs::read_dir(lib.join(&raw_rel)) {
-            for e in rd.flatten() {
-                let q = e.path();
-                if stem(&q) == st && is_raw(&q) {
-                    pairs.push((q.clone(), root.join(&raw_rel).join(e.file_name())));
+        // RAW files and XMP sidecars travel with the photo.
+        for (dir_rel, raw_only) in [(raw_rel.clone(), false), (parent_rel.to_path_buf(), true)] {
+            if let Ok(rd) = fs::read_dir(lib.join(&dir_rel)) {
+                for e in rd.flatten() {
+                    let q = e.path();
+                    let companion = if raw_only { ext(&q) == "xmp" } else { is_raw(&q) || ext(&q) == "xmp" };
+                    if q != src && stem(&q) == st && companion {
+                        pairs.push((q.clone(), root.join(&dir_rel).join(e.file_name())));
+                    }
                 }
             }
         }
@@ -56,19 +79,12 @@ pub fn move_to_review(lib: &str, folder: &str, paths: Vec<String>) -> Result<usi
             if !from.exists() {
                 continue;
             }
-            let dir = to.parent().unwrap();
-            fs::create_dir_all(dir).map_err(err)?;
-            let to = free_path(dir, &to.file_name().unwrap().to_string_lossy());
-            fs::rename(&from, &to).map_err(err)?;
+            let to = move_file(lib, &from, to.parent().unwrap())?;
             batch.push((from.to_string_lossy().into(), to.to_string_lossy().into()));
         }
     }
     let n = batch.len();
-    if n > 0 {
-        let mut j = load(lib);
-        j.batches.push(batch);
-        save(lib, &j)?;
-    }
+    record(lib, batch)?;
     Ok(n)
 }
 
@@ -78,12 +94,17 @@ pub fn undo_last(lib: &str) -> Result<usize, String> {
     let Some(batch) = j.batches.pop() else { return Ok(0) };
     let mut n = 0;
     for (from, to) in batch.iter().rev() {
+        if let Some(rel) = from.strip_prefix(crate::meta::SHIFT_MARK) {
+            crate::meta::restore_shift(lib, rel, to.parse().unwrap_or(0))?;
+            continue;
+        }
         let (from, to) = (Path::new(from), Path::new(to));
         if to.exists() && !from.exists() {
             if let Some(d) = from.parent() {
                 fs::create_dir_all(d).map_err(err)?;
             }
             fs::rename(to, from).map_err(err)?;
+            crate::meta::rekey(lib, to, from);
             n += 1;
         }
     }
@@ -132,6 +153,12 @@ fn review_roots(lib: &Path) -> Vec<(String, PathBuf)> {
 fn raws_for(dir: &Path, st: &str) -> Vec<PathBuf> {
     fs::read_dir(dir)
         .map(|rd| rd.flatten().map(|e| e.path()).filter(|q| is_raw(q) && stem(q) == st).collect())
+        .unwrap_or_default()
+}
+
+fn sidecars_in(dir: &Path, st: &str, except: &Path) -> Vec<PathBuf> {
+    fs::read_dir(dir)
+        .map(|rd| rd.flatten().map(|e| e.path()).filter(|q| ext(q) == "xmp" && stem(q) == st && q != except).collect())
         .unwrap_or_default()
 }
 
@@ -200,25 +227,23 @@ pub fn restore(lib: &str, paths: Vec<String>) -> Result<usize, String> {
         let rel_dir = src.parent().unwrap().strip_prefix(root).map_err(err)?.to_path_buf();
         let dest_dir = lib_folder(lib, &rel_dir);
         let mut pairs = vec![(src.clone(), dest_dir.clone())];
-        for q in raws_for(&raw_sibling(src.parent().unwrap()), &stem(&src)) {
+        let raw_src = raw_sibling(src.parent().unwrap());
+        for q in sidecars_in(src.parent().unwrap(), &stem(&src), &src) {
+            pairs.push((q, dest_dir.clone()));
+        }
+        for q in raws_for(&raw_src, &stem(&src)).into_iter().chain(sidecars_in(&raw_src, &stem(&src), &src)) {
             pairs.push((q, raw_sibling(&dest_dir)));
         }
         for (from, dir) in pairs {
             if !from.exists() {
                 continue;
             }
-            fs::create_dir_all(&dir).map_err(err)?;
-            let to = free_path(&dir, &from.file_name().unwrap().to_string_lossy());
-            fs::rename(&from, &to).map_err(err)?;
+            let to = move_file(lib, &from, &dir)?;
             batch.push((from.to_string_lossy().into(), to.to_string_lossy().into()));
         }
     }
     let n = batch.len();
-    if n > 0 {
-        let mut j = load(lib);
-        j.batches.push(batch);
-        save(lib, &j)?;
-    }
+    record(lib, batch)?;
     Ok(n)
 }
 

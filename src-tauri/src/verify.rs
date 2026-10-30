@@ -15,15 +15,19 @@ pub struct HashCache {
 }
 
 impl HashCache {
-    fn file(lib: &Path) -> std::path::PathBuf {
-        state_dir(lib).join("hashes.json")
-    }
     pub fn load(lib: &Path) -> Self {
-        fs::read(Self::file(lib)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+        Self::load_named(lib, "hashes.json")
     }
     pub fn save(&self, lib: &Path) {
+        self.save_named(lib, "hashes.json")
+    }
+    /// The backup's hashes live in the library's state folder too, under their own name.
+    pub fn load_named(lib: &Path, name: &str) -> Self {
+        fs::read(state_dir(lib).join(name)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+    }
+    pub fn save_named(&self, lib: &Path, name: &str) {
         if let Ok(b) = serde_json::to_vec(self) {
-            let _ = fs::write(Self::file(lib), b);
+            let _ = fs::write(state_dir(lib).join(name), b);
         }
     }
     pub fn get(&self, p: &Path, m: &fs::Metadata) -> Option<String> {
@@ -49,9 +53,48 @@ pub struct Report {
     pub missing: Vec<Missing>,
     pub only_in_review: usize,
     pub checksum_file: String,
+    pub backup: Option<BackupCheck>,
 }
 
-pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, card: &str, lib: &str) -> Result<Report, String> {
+#[derive(Serialize)]
+pub struct BackupCheck {
+    pub path: String,
+    pub unavailable: bool,
+    pub matched: usize,
+    pub missing: Vec<Missing>,
+}
+
+/// Hashes of every file under `root`, cached by path/size/mtime in `cache_name`.
+fn hash_tree<R: tauri::Runtime>(app: &AppHandle<R>, lib: &Path, root: &Path, cache_name: &str, label: &str) -> HashMap<String, Vec<std::path::PathBuf>> {
+    let mut cache = HashCache::load_named(lib, cache_name);
+    let files: Vec<_> = walk_files(root, true).into_iter().filter_map(|p| fs::metadata(&p).ok().map(|m| (p, m))).collect();
+    let todo: Vec<_> = files.iter().filter(|(p, m)| cache.get(p, m).is_none()).collect();
+    let total: u64 = todo.iter().map(|(_, m)| m.len()).sum();
+    let done = AtomicU64::new(0);
+    let fresh: Vec<_> = todo
+        .par_iter()
+        .with_max_len(1)
+        .filter_map(|(p, m)| {
+            let h = hash_file(p).ok()?;
+            let d = done.fetch_add(m.len(), Ordering::Relaxed) + m.len();
+            emit(app, "verify", d, total, label);
+            Some((p.clone(), (*m).clone(), h))
+        })
+        .collect();
+    for (p, m, h) in fresh {
+        cache.put(&p, &m, h);
+    }
+    cache.save_named(lib, cache_name);
+    let mut by: HashMap<String, Vec<std::path::PathBuf>> = HashMap::new();
+    for (p, m) in files {
+        if let Some(h) = cache.get(&p, &m) {
+            by.entry(h).or_default().push(p);
+        }
+    }
+    by
+}
+
+pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, card: &str, lib: &str, backup: Option<String>) -> Result<Report, String> {
     let card = Path::new(card);
     let lib = Path::new(lib);
 
@@ -121,7 +164,22 @@ pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, card: &str, lib: &str) -> Resu
     let body: String = card_hashes.iter().map(|(p, _, h)| format!("{h}  {p}\n")).collect();
     fs::write(&sums, body).map_err(err)?;
 
+    let backup = backup.map(|b| {
+        let root = Path::new(&b);
+        if !root.is_dir() {
+            return BackupCheck { path: b.clone(), unavailable: true, matched: 0, missing: vec![] };
+        }
+        let in_b = hash_tree(app, lib, root, "hashes_backup.json", "@verify_backup");
+        let missing: Vec<Missing> = card_hashes
+            .iter()
+            .filter(|(_, _, h)| !in_b.contains_key(h))
+            .map(|(p, size, _)| Missing { path: p.clone(), size: *size })
+            .collect();
+        BackupCheck { path: b.clone(), unavailable: false, matched: card_hashes.len() - missing.len(), missing }
+    });
+
     Ok(Report {
+        backup,
         card_files: card_hashes.len(),
         card_bytes: card_total,
         matched: card_hashes.len() - missing.len(),

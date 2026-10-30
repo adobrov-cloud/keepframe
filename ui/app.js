@@ -95,7 +95,10 @@ const state = {
   review: { items: null, dir: null, folder: '*', sel: new Set() },
   videos: null,        // videos in the library
   stars: new Set(),    // favourite shots, library-relative paths
-  gallery: { scope: '*', filter: 'all', open: null, sel: new Set(), selecting: false, anchor: null },
+  meta: {},            // library-relative path -> {rating, label, shift}
+  backup: null,        // second-copy folder, or null
+  importOffset: 0,     // seconds added to the camera clock at import
+  gallery: { scope: '*', filter: 'all', rating: 0, label: '', open: null, sel: new Set(), selecting: false, anchor: null },
   busy: false,
 };
 
@@ -376,6 +379,7 @@ async function pickLibrary() {
     const s = await invoke('set_library', { library: dir });
     setLib(s.library);
     await loadStars();
+    await loadMeta();
     render();
   } catch (e) { showError(e); }
 }
@@ -385,20 +389,21 @@ async function pickLibrary() {
 function scan() {
   const card = state.card;
   return task('scan', t('task_scan'), async () => {
-    state.plan = await invoke('scan_import', { card, library: state.lib });
+    state.plan = await invoke('scan_import', { card, library: state.lib, offset: state.importOffset });
   });
 }
 
 function runImport() {
   const items = state.plan.items;
   return task('import', t('task_import'), async () => {
-    const rep = await invoke('run_import', { items, library: state.lib });
+    const rep = await invoke('run_import', { items, library: state.lib, offset: state.importOffset });
     state.report = rep;
     state.newFolders = rep.folders;
     state.recs = null;
     state.videos = null;
     delete state.cardInfo[state.card];
-    state.plan = await invoke('scan_import', { card: state.card, library: state.lib });
+    state.plan = await invoke('scan_import', { card: state.card, library: state.lib, offset: state.importOffset });
+    await loadMeta();
   }).then(() => {
     if (mindfulOn() && state.report?.photos.length) startMindful(state.report.photos);
   });
@@ -423,6 +428,9 @@ function viewImport(main) {
       <h3>${r.failed.length ? t('rep_errors') : t('rep_done')}</h3>
       <div>${t('rep_line', files(r.copied), gb(r.bytes), r.skipped)}</div>
       ${r.failed.length ? `<div class="scroll small" style="margin-top:8px">${r.failed.map(f => esc(msg(f))).join('<br>')}</div>` : ''}
+      ${r.backup ? (r.backup_unavailable ? `<div class="panel warnbox" style="margin:10px 0 0">${t('rep_backup_unavail')}</div>`
+        : `<div class="small" style="margin-top:6px">${t('rep_backup', files(r.backup_copied), esc(r.backup))}</div>
+          ${r.backup_failed.length ? `<div class="panel warnbox" style="margin:10px 0 0">${t('rep_backup_failed', files(r.backup_failed.length))}<div class="scroll small">${r.backup_failed.map(f => esc(msg(f))).join('<br>')}</div></div>` : ''}`) : ''}
       <div class="row" style="margin-top:12px">
         ${r.photos.length ? `<button class="btn" id="goMindful">${t('go_mindful', shots(r.photos.length))}</button>` : ''}
         <button class="btn" id="goDupes">${t('go_dupes')}</button>
@@ -456,6 +464,9 @@ function viewImport(main) {
     }).join('')}</div>
     <label class="mindful"><input type="checkbox" id="mindful" ${mindfulOn() ? 'checked' : ''}>
       <span><b>${t('mindful')}</b><br><span class="mut small">${t('mindful_sub')}</span></span></label>
+    ${clockBox()}
+    <div class="backup-line small">${icon('folder', 15)} ${state.backup ? esc(t('backup_to', state.backup))
+      : `<span class="mut">${t('backup_off')}</span> · <button class="link" id="goBackup">${t('backup_setup')}</button>`}</div>
     <div class="row"><button class="btn primary" id="doImport" ${state.busy ? 'disabled' : ''}>${t('do_import', files(p.items.length), gb(p.bytes))}</button>
     <button class="btn" id="rescan" ${state.busy ? 'disabled' : ''}>${t('rescan')}</button></div>`;
   } else if (!state.report) {
@@ -466,6 +477,27 @@ function viewImport(main) {
   lazyThumbs(main, 320);
   bindImport(main);
 }
+// Camera clock correction for the import: sign, hours, minutes. Changing it re-plans the day folders.
+function clockBox() {
+  const o = state.importOffset, a = Math.abs(o), open = o !== 0 || state.clockOpen;
+  return `<details class="clock" ${open ? 'open' : ''}><summary>${t('clock')}${o ? ` <b>${o > 0 ? '+' : '−'}${Math.floor(a / 3600)}:${String(Math.floor(a % 3600 / 60)).padStart(2, '0')}</b>` : ''}</summary>
+    <div class="row" style="margin-top:8px">${t('clock_shift')}
+      <select id="cSign"><option value="1" ${o >= 0 ? 'selected' : ''}>+</option><option value="-1" ${o < 0 ? 'selected' : ''}>−</option></select>
+      <input type="number" id="cH" min="0" max="99" value="${Math.floor(a / 3600)}" class="num"> ${t('hours')}
+      <input type="number" id="cM" min="0" max="59" value="${Math.floor(a % 3600 / 60)}" class="num"> ${t('minutes')}</div>
+    <div class="mut small" style="margin-top:6px">${t('clock_sub')}</div></details>`;
+}
+function bindClock(main) {
+  const d = $('details.clock', main);
+  if (!d) return;
+  d.ontoggle = () => (state.clockOpen = d.open);
+  const read = () => +$('#cSign', main).value * ((+$('#cH', main).value || 0) * 3600 + (+$('#cM', main).value || 0) * 60);
+  ['#cSign', '#cH', '#cM'].forEach(id => ($(id, main).onchange = () => {
+    state.importOffset = read();
+    state.plan = null;
+    scan();
+  }));
+}
 function bindImport(main) {
   bindCard(main, scan);
   $('#doImport', main)?.addEventListener('click', runImport);
@@ -475,6 +507,8 @@ function bindImport(main) {
     M?.items.length && M.i < M.items.length ? go('mindful') : startMindful(state.report.photos);
   });
   $('#rescan', main)?.addEventListener('click', () => { state.plan = null; scan(); });
+  $('#goBackup', main)?.addEventListener('click', () => go('settings'));
+  bindClock(main);
   $('#goVerify', main)?.addEventListener('click', () => go('verify'));
   $('#goDupes', main)?.addEventListener('click', () => { state.scope.dupes = 'new'; state.dupes.groups = []; go('dupes'); });
 }
@@ -502,6 +536,13 @@ function viewVerify(main) {
       html += `<div class="panel badbox"><h3>${t('v_bad', files(v.missing.length))}</h3>
         <div class="scroll small">${v.missing.map(m => `${esc(m.path)} <span class="mut">${gb(m.size)}</span>`).join('<br>')}</div>
         <div class="row" style="margin-top:10px"><button class="btn" id="goImport">${t('go_import')}</button></div></div>`;
+    }
+    if (v.backup) {
+      const b = v.backup;
+      html += b.unavailable ? `<div class="panel warnbox">${t('v_backup_unavail')} <span class="mut small">${esc(b.path)}</span></div>`
+        : !b.missing.length ? `<div class="panel okbox"><b>${t('v_backup_ok', files(b.matched))}</b> <span class="mut small">${esc(b.path)}</span></div>`
+        : `<div class="panel warnbox"><b>${t('v_backup_missing', files(b.missing.length))}</b> <span class="mut small">${esc(b.path)}</span>
+            <div class="scroll small" style="margin-top:6px">${b.missing.slice(0, 200).map(m => esc(m.path)).join('<br>')}</div></div>`;
     }
     html += `<div class="mut small">${t('v_sums')} <button class="link" id="revealSums">${esc(v.checksum_file)}</button></div>`;
   }
@@ -1005,6 +1046,7 @@ function undo() {
     state.dupes.groups = [];
     state.blurry.stale = true;
     toast(t('returned', files(n)));
+    await loadMeta();
     await invoke('analyze', { library: state.lib }).then(r => (state.recs = r));
     loadReview().then(updateNav).catch(() => {});
   });
@@ -1177,17 +1219,96 @@ async function setStars(paths, on) {
 }
 const toggleStar = path => setStars([path], !isStar(path));
 
+// Ratings and colour labels, mirrored to XMP sidecars by the backend.
+const LABELS = { Red: '#e63e35', Yellow: '#e8b923', Green: '#4caf50', Blue: '#3b82c4', Purple: '#8e5cc2' };
+const metaOf = p => state.meta[relPath(p)] || {};
+async function loadMeta() {
+  state.meta = await invoke('get_meta', { library: state.lib }).catch(() => ({}));
+}
+async function setMeta(paths, rating, label) {
+  try {
+    state.meta = await invoke('set_meta', { library: state.lib, paths, rating, label });
+  } catch (e) { showError(e); }
+  render();
+}
+const stars5 = r => (r ? '★'.repeat(r) : '');
+function rateKey(k, paths) {
+  if (/^[0-5]$/.test(k)) { setMeta(paths, +k, null); return true; }
+  const lab = { 6: 'Red', 7: 'Yellow', 8: 'Green', 9: 'Blue' }[k];
+  if (lab) {
+    const all = paths.every(p => metaOf(p).label === lab);
+    setMeta(paths, null, all ? '' : lab);
+    return true;
+  }
+  return false;
+}
+function rateControls(paths, idp) {
+  const cur = paths.length === 1 ? metaOf(paths[0]) : {};
+  return `<span class="rate" id="${idp}rate">${[1, 2, 3, 4, 5].map(n =>
+      `<button data-r="${n}" class="${(cur.rating || 0) >= n ? 'on' : ''}" title="${t('h_rate')} ${n}">★</button>`).join('')}
+      <button data-r="0" class="clr" title="${t('clear_rating')}">✕</button></span>
+    <span class="labs" id="${idp}labs">${Object.entries(LABELS).map(([n, c]) =>
+      `<button data-l="${n}" class="${cur.label === n ? 'on' : ''}" style="--c:${c}" title="${t('label_' + n)}"></button>`).join('')}
+      <button data-l="" class="clr" title="${t('clear_label')}">✕</button></span>`;
+}
+function bindRate(root, idp, paths) {
+  root.querySelectorAll(`#${idp}rate [data-r]`).forEach(b => (b.onclick = () => setMeta(paths, +b.dataset.r, null)));
+  root.querySelectorAll(`#${idp}labs [data-l]`).forEach(b => (b.onclick = () => setMeta(paths, null, b.dataset.l)));
+}
+
+// Capture-time shift for chosen shots.
+function openShift(paths) {
+  const el = document.createElement('div');
+  el.className = 'modal-bg';
+  el.innerHTML = `<div class="modal"><h3>${t('shift_title', shots(paths.length))}</h3>
+    <div class="row">${t('clock_shift')}
+      <select id="sSign"><option value="1">+</option><option value="-1">−</option></select>
+      <input type="number" id="sH" min="0" max="999" value="0" class="num"> ${t('hours')}
+      <input type="number" id="sM" min="0" max="59" value="0" class="num"> ${t('minutes')}</div>
+    <div class="mut small" id="sPrev" style="margin:10px 0"></div>
+    <div class="mut small">${t('shift_note')}</div>
+    <div class="row" style="justify-content:flex-end;margin-top:16px">
+      <button class="btn" id="sCancel">${t('cancel')}</button><button class="btn primary" id="sGo">${t('shift_apply')}</button></div></div>`;
+  document.body.appendChild(el);
+  const first = galleryItems().find(i => i.path === paths[0]);
+  const secs = () => +$('#sSign', el).value * ((+$('#sH', el).value || 0) * 3600 + (+$('#sM', el).value || 0) * 60);
+  const fmt = ts => fmtTs(ts, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const prev = () => { if (first) $('#sPrev', el).textContent = `${fmt(first.ts)} → ${fmt(first.ts + secs())}`; };
+  ['#sSign', '#sH', '#sM'].forEach(id => ($(id, el).oninput = prev));
+  prev();
+  const close = () => el.remove();
+  $('#sCancel', el).onclick = close;
+  el.onclick = e => { if (e.target === el) close(); };
+  $('#sGo', el).onclick = () => {
+    const s = secs();
+    close();
+    if (!s) return;
+    task('move', t('task_move'), async () => {
+      const n = await invoke('shift_time', { library: state.lib, paths, seconds: s });
+      await loadMeta();
+      state.recs = await invoke('analyze', { library: state.lib });
+      state.videos = null;
+      state.gallery.sel.clear();
+      state.gallery.open = null;
+      const el2 = toast(`${n ? t('shifted', files(n)) : t('shifted0')} <button class="btn" id="tUndo">${t('undo')}</button>`, 12000);
+      $('#tUndo', el2).onclick = undo;
+    });
+  };
+}
+
 // Photos come from the analysis records (one per shot, RAW-only included), videos from their own listing.
 let galleryMemo = { recs: null, videos: null, items: [] };
 function galleryItems() {
-  if (galleryMemo.recs !== state.recs || galleryMemo.videos !== state.videos) {
-    const items = (state.recs || []).map(r => ({ path: r.path, folder: r.folder, name: r.name, ts: r.ts ?? r.mtime, vertical: r.vertical, rec: r }))
-      .concat((state.videos || []).map(v => ({ path: v.path, folder: v.folder, name: v.name, ts: v.mtime, video: true })));
+  if (galleryMemo.recs !== state.recs || galleryMemo.videos !== state.videos || galleryMemo.meta !== state.meta) {
+    // Capture times include the user's corrections (camera clock off).
+    const shift = p => metaOf(p).shift || 0;
+    const items = (state.recs || []).map(r => ({ path: r.path, folder: r.folder, name: r.name, ts: (r.ts ?? r.mtime) + shift(r.path), vertical: r.vertical, rec: r }))
+      .concat((state.videos || []).map(v => ({ path: v.path, folder: v.folder, name: v.name, ts: v.mtime + shift(v.path), video: true })));
     // Display order: newest day first, shots inside a day in shooting order (RAW-only shots join their day).
     const dayOf = it => it.folder.replace(/ RAW$/, ''), start = {};
     items.forEach(it => { const d = dayOf(it); start[d] = Math.min(start[d] ?? Infinity, it.ts); });
     items.sort((a, b) => start[dayOf(b)] - start[dayOf(a)] || dayOf(a).localeCompare(dayOf(b)) || a.ts - b.ts || a.name.localeCompare(b.name));
-    galleryMemo = { recs: state.recs, videos: state.videos, items };
+    galleryMemo = { recs: state.recs, videos: state.videos, meta: state.meta, items };
   }
   return galleryMemo.items;
 }
@@ -1195,7 +1316,9 @@ function galleryShown() {
   const G = state.gallery;
   return galleryItems().filter(it =>
     (G.scope === '*' || it.folder.replace(/ RAW$/, '') === G.scope) &&
-    (G.filter === 'all' || (G.filter === 'stars' ? isStar(it.path) : it.video)));
+    (G.filter === 'all' || (G.filter === 'stars' ? isStar(it.path) : it.video)) &&
+    (!G.rating || (metaOf(it.path).rating || 0) >= G.rating) &&
+    (!G.label || (G.label === 'none' ? !metaOf(it.path).label : metaOf(it.path).label === G.label)));
 }
 const fmtTs = (ts, o) => new Date(ts * 1000).toLocaleDateString(LANG, { timeZone: 'UTC', ...o });
 
@@ -1223,6 +1346,8 @@ function viewGallery(main) {
       <span class="grow"></span>
       <select id="gscope"><option value="*">${t('scope_all')}</option>${days4sel.map(d => `<option value="${esc(d)}" ${d === G.scope ? 'selected' : ''}>${esc(d)}</option>`).join('')}</select>
       <div class="seg">${['all', 'stars', 'videos'].map(f => `<button data-f="${f}" class="${G.filter === f ? 'on' : ''}">${t('g_' + f)}</button>`).join('')}</div>
+      <select id="grate"><option value="0">${t('rating_any')}</option>${[1, 2, 3, 4, 5].map(n => `<option value="${n}" ${G.rating === n ? 'selected' : ''}>${t('rating_min', n)}</option>`).join('')}</select>
+      <select id="glabel"><option value="">${t('label_any')}</option>${Object.keys(LABELS).map(n => `<option value="${n}" ${G.label === n ? 'selected' : ''}>${t('label_' + n)}</option>`).join('')}<option value="none" ${G.label === 'none' ? 'selected' : ''}>${t('label_none')}</option></select>
       <input type="range" id="gsize" min="110" max="340" step="10" value="${h}" title="${t('g_size')}">
       <button class="btn ${G.selecting ? 'on' : ''}" id="gselect">${t('g_select')}</button></div>
     ${shown.length ? days.map(([day, list]) => `<section class="g-day">
@@ -1232,11 +1357,15 @@ function viewGallery(main) {
         return `<div class="gt ${it.video ? 'vid' : ''} ${G.sel.has(it.path) ? 'sel' : ''}" data-i="${i}" style="flex:${a} 1 ${Math.round(a * h)}px">
           <span class="gck">${icon('check', 14)}</span>
           <img data-path="${esc(it.path)}" alt="">${it.video ? `<span class="gv">${icon('play', 22)}</span>` : ''}
-          ${isStar(it.path) ? `<span class="gs">${icon('star', 14)}</span>` : ''}</div>`;
+          ${isStar(it.path) ? `<span class="gs">${icon('star', 14)}</span>` : ''}
+          ${metaOf(it.path).rating ? `<span class="gr">${stars5(metaOf(it.path).rating)}</span>` : ''}
+          ${metaOf(it.path).label ? `<span class="gl" style="background:${LABELS[metaOf(it.path).label]}"></span>` : ''}</div>`;
       }).join('')}<i class="g-fill"></i></div></section>`).join('') + selBar()
     : `<div class="empty"><div class="big">${icon(G.filter === 'stars' ? 'star' : 'gallery', 54)}</div><h2>${t('g_empty')}</h2>${G.filter === 'stars' ? t('g_empty_stars') : ''}</div>`}`;
   lazyThumbs(main, h > 220 ? 800 : 480);
   $('#gscope', main).onchange = e => { G.scope = e.target.value; render(); };
+  $('#grate', main).onchange = e => { G.rating = +e.target.value; render(); };
+  $('#glabel', main).onchange = e => { G.label = e.target.value; render(); };
   main.querySelectorAll('[data-f]').forEach(b => (b.onclick = () => { G.filter = b.dataset.f; render(); }));
   $('#gsize', main).oninput = e => {
     lsSet('gsize', e.target.value);
@@ -1278,6 +1407,8 @@ function selBar() {
   const paths = [...G.sel], allStar = n && paths.every(isStar);
   return `<div class="selbar" id="selbar"><b>${t('g_selected', fmtN(n))}</b>
     <button class="btn" id="sStar" ${n ? '' : 'disabled'}>${icon('star', 15)} ${allStar ? t('g_unstar_sel') : t('g_star_sel')}</button>
+    ${n ? rateControls(paths, 's') : ''}
+    <button class="btn" id="sTime" ${n && !state.busy ? '' : 'disabled'}>${t('g_time')}</button>
     <button class="btn" id="sReject" ${n && !state.busy ? '' : 'disabled'}>${t('g_reject_sel')}</button>
     <button class="btn" id="sReveal" ${n ? '' : 'disabled'}>${revealLabel()}</button>
     <button class="btn" id="sAll">${t('sel_all')}</button>
@@ -1290,6 +1421,8 @@ function bindSelBar(main, shown) {
   $('#sStar', bar).onclick = () => { const p = [...G.sel]; setStars(p, !p.every(isStar)); };
   $('#sReject', bar).onclick = () => applyMoves('rejects', [...G.sel])?.then(() => { G.sel.clear(); G.selecting = false; render(); });
   $('#sReveal', bar).onclick = () => opener.revealItemInDir([...G.sel][0]);
+  $('#sTime', bar).onclick = () => openShift([...G.sel]);
+  bindRate(bar, 's', [...G.sel]);
   $('#sAll', bar).onclick = () => { shown.forEach(x => G.sel.add(x.path)); refreshSel(main, shown); };
   $('#sNone', bar).onclick = () => { G.sel.clear(); G.selecting = false; render(); };
 }
@@ -1311,6 +1444,7 @@ function galleryKey(e) {
     refreshSel($('#main'), shown);
     return true;
   }
+  if (!e.metaKey && !e.ctrlKey && G.sel.size && !$('.modal-bg') && rateKey(e.key, [...G.sel])) return true;
   if (e.key === 'Escape' && (G.sel.size || G.selecting)) {
     G.sel.clear();
     G.selecting = false;
@@ -1354,7 +1488,9 @@ function viewViewer(main, shown) {
     <div class="rv-head"><button class="btn" id="vClose" title="${t('v_close')}">←</button>
       <b>${esc(it.name)}</b><span class="mut">${esc(it.folder)} · ${fmtTs(it.ts, { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
       <span class="mut">${t('of', k + 1, photos.length)}</span><span class="grow"></span>
+      ${rateControls([it.path], 'v')}
       <button class="btn ${star ? 'starred' : ''}" id="vStar" title="${star ? t('v_unstar') : t('v_star')}">${icon('star', 15)}</button>
+      <button class="btn" id="vTime" ${state.busy ? 'disabled' : ''}>${t('g_time')}</button>
       <button class="btn" id="vReveal">${revealLabel()}</button>
       <button class="btn" id="vOpen">${t('v_open')}</button>
       <button class="btn" id="vReject" ${state.busy ? 'disabled' : ''}>${t('v_reject')}</button></div>
@@ -1365,6 +1501,7 @@ function viewViewer(main, shown) {
     </div>
     <div class="rv-foot" style="justify-content:center"><span><kbd>←</kbd> <kbd>→</kbd> ${t('h_nav')}</span>
       <span><kbd>${t('h_wheel')}</kbd> ${t('h_zoom')}</span><span><kbd>${t('h_click')}</kbd> / <kbd>${t('h_space')}</kbd> ${t('h_1to1')}</span>
+      <span><kbd>1</kbd>–<kbd>5</kbd> ${t('h_rate')}</span><span><kbd>6</kbd>–<kbd>9</kbd> ${t('h_label')}</span>
       <span><kbd>F</kbd> ${t('h_star')}</span><span><kbd>I</kbd> ${t('h_info')}</span><span><kbd>⌫</kbd> ${t('h_reject')}</span><span><kbd>Esc</kbd> ${t('h_close')}</span></div>
   </div>`;
   const box = $('#vbox', main);
@@ -1384,6 +1521,8 @@ function viewViewer(main, shown) {
   $('#vNext', main)?.addEventListener('click', () => stepViewer(1));
   $('#vClose', main).onclick = closeViewer;
   $('#vStar', main).onclick = () => toggleStar(it.path);
+  $('#vTime', main).onclick = () => openShift([it.path]);
+  bindRate(main, 'v', [it.path]);
   $('#vReveal', main).onclick = () => opener.revealItemInDir(it.path);
   $('#vOpen', main).onclick = () => opener.openPath(it.path);
   $('#vReject', main).onclick = () => rejectFromViewer(it);
@@ -1477,6 +1616,11 @@ async function viewSettings(main) {
     <div class="panel"><h3>${t('s_lib')}</h3>
       <div class="pathrow">${icon('folder', 16)}<span>${esc(state.lib)}</span>
         <button class="btn" id="pick">${t('change')}</button><button class="btn" id="reveal">${revealLabel()}</button></div></div>
+    <div class="panel"><h3>${t('s_backup')}</h3><div class="mut small" style="margin-bottom:10px">${t('s_backup_sub')}</div>
+      <div class="pathrow">${icon('folder', 16)}<span class="${state.backup ? '' : 'mut'}">${esc(state.backup || t('s_backup_none'))}</span>
+        <button class="btn" id="bPick">${t('s_backup_pick')}</button>
+        ${state.backup ? `<button class="btn" id="bOff">${t('s_backup_off')}</button>` : ''}</div>
+      ${state.backup ? `<div class="row" style="margin-top:10px"><button class="btn" id="bSync" ${state.busy ? 'disabled' : ''}>${t('s_backup_sync')}</button></div>` : ''}</div>
     <div class="panel"><h3>${t('s_moves')}</h3>
       <div class="mut" style="margin-bottom:10px">${t('s_moves_sub', t('actions', undoN))}</div>
       <button class="btn" id="undo" ${undoN && !state.busy ? '' : 'disabled'}>${t('s_undo')}</button></div>
@@ -1487,6 +1631,19 @@ async function viewSettings(main) {
   $('#reveal', main).onclick = () => opener.revealItemInDir(state.lib);
   $('#undo', main).onclick = undo;
   $('#reanalyze', main).onclick = () => { state.recs = null; ensureRecs(); };
+  const setB = async b => {
+    try { state.backup = (await invoke('set_backup', { backup: b })).backup ?? null; } catch (e) { showError(e); }
+    render();
+  };
+  $('#bPick', main).onclick = async () => {
+    const dir = await dialog.open({ directory: true, defaultPath: state.backup || undefined });
+    if (dir) setB(dir);
+  };
+  $('#bOff', main)?.addEventListener('click', () => setB(null));
+  $('#bSync', main)?.addEventListener('click', () => task('backup', t('task_backup'), async () => {
+    const r = await invoke('backup_sync', { library: state.lib });
+    toast(t('sync_done', files(r.copied), gb(r.bytes)) + (r.failed.length ? ` · ${t('rep_backup_failed', files(r.failed.length))}` : ''), 9000);
+  }));
 }
 
 function setLib(lib) {
@@ -1563,6 +1720,7 @@ function go(v) {
 let hoverPath = null;
 addEventListener('keydown', e => {
   if (['SELECT', 'INPUT'].includes(e.target.tagName)) return;
+  if ($('.modal-bg')) { if (e.key === 'Escape') $('.modal-bg').remove(); return; }
   if (state.view === 'gallery' && state.gallery.open == null && galleryKey(e)) return;
   if (e.metaKey || e.ctrlKey) return;
   // Letter shortcuts go by physical key, so they work in any keyboard layout.
@@ -1576,6 +1734,7 @@ addEventListener('keydown', e => {
     else if (k === 'arrowleft') { e.preventDefault(); stepViewer(-1); }
     else if (k === ' ') { e.preventDefault(); if (viewerZoom?.box.isConnected) zoom1to1(viewerZoom.box, viewerZoom.apply); }
     else if (k === 'f') toggleStar(it.path);
+    else if (rateKey(k, [it.path])) {}
     else if (k === 'i') toggleExif();
     else if (k === 'backspace' || k === 'delete') { e.preventDefault(); if (!state.busy) rejectFromViewer(it); }
     else if (k === '0') { resetZoom(); viewerZoom?.apply(); }
@@ -1617,6 +1776,8 @@ addEventListener('keyup', e => {
   buildNav();
   const s = await invoke('get_settings');
   setLib(s.library);
+  state.backup = s.backup ?? null;
+  await loadMeta();
   if (state.view === 'welcome') document.body.classList.add('welcome');
   render();
   loadReview().then(updateNav).catch(() => {});

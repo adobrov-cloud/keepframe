@@ -391,3 +391,28 @@ main.selecting .gck { display: grid; }
 .selbar { position: sticky; bottom: 0; margin: 8px -30px -30px; padding: 12px 30px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
   background: var(--panel); border-top: 1px solid var(--line); box-shadow: 0 -8px 24px #0003; z-index: 6; }
 .btn.on { border-color: var(--brand); color: var(--brand); }
+
+/* ratings & labels */
+.rate, .labs { display: inline-flex; align-items: center; gap: 2px; }
+.rate button, .labs button { all: unset; cursor: pointer; line-height: 1; }
+.rate button { font-size: 17px; color: var(--line); padding: 2px 1px; }
+.rate button.on { color: var(--brand); }
+.rate button:hover { color: var(--brand); opacity: .7; }
+.labs { margin-left: 6px; gap: 5px; }
+.labs button:not(.clr) { width: 14px; height: 14px; border-radius: 50%; background: var(--c); opacity: .45; outline: 2px solid transparent; outline-offset: 1px; }
+.labs button.on { opacity: 1; outline-color: var(--fg2); }
+.rate .clr, .labs .clr { font-size: 11px; color: var(--mut); padding: 0 3px; }
+.gr { position: absolute; left: 6px; bottom: 5px; font-size: 12px; letter-spacing: -1px; color: #fff; text-shadow: 0 1px 3px #000c; pointer-events: none; }
+.gl { position: absolute; right: 6px; bottom: 7px; width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 0 1.5px #000a; pointer-events: none; }
+
+/* import: clock & backup line */
+details.clock { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 16px; margin-bottom: 14px; }
+details.clock summary { cursor: pointer; color: var(--fg2); }
+input.num { width: 62px; background: var(--panel2); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; }
+.backup-line { display: flex; align-items: center; gap: 6px; color: var(--fg2); margin: -4px 0 14px 2px; }
+.backup-line .ic { color: var(--acc); }
+
+/* modal */
+.modal-bg { position: fixed; inset: 0; background: #0008; display: grid; place-items: center; z-index: 80; }
+.modal { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px 22px; width: min(460px, 92vw); box-shadow: var(--shadow); }
+.modal h3 { margin: 0 0 14px; }

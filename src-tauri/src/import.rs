@@ -1,7 +1,7 @@
 use crate::util::*;
 use crate::verify::HashCache;
 use crate::emit;
-use chrono::NaiveDateTime;
+use chrono::{Duration, NaiveDateTime};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -51,9 +51,15 @@ pub struct Report {
     pub folders: Vec<String>,
     /// One viewable file per imported shot (JPEG/HEIF, or the RAW when shot RAW-only), in shooting order.
     pub photos: Vec<String>,
+    /// Second copy: where it went, how many files, what failed; `backup_unavailable` when the folder wasn't reachable.
+    pub backup: Option<String>,
+    pub backup_copied: usize,
+    pub backup_failed: Vec<String>,
+    pub backup_unavailable: bool,
 }
 
-pub fn scan<R: tauri::Runtime>(app: &AppHandle<R>, card: &str, lib: &str) -> Result<Plan, String> {
+/// `offset`: seconds to add to the camera's clock (it was set wrong, or to another time zone).
+pub fn scan<R: tauri::Runtime>(app: &AppHandle<R>, card: &str, lib: &str, offset: i64) -> Result<Plan, String> {
     let card = Path::new(card);
     let lib = Path::new(lib);
     emit(app, "scan", 0, 0, "@scan_card");
@@ -88,7 +94,7 @@ pub fn scan<R: tauri::Runtime>(app: &AppHandle<R>, card: &str, lib: &str) -> Res
             continue;
         }
         let dt = jpg_dates.get(&stem(p)).cloned().or_else(|| mtime_local(p));
-        let Some(dt) = dt else { continue };
+        let Some(dt) = dt.map(|d| d + Duration::seconds(offset)) else { continue };
         let kind = if is_raw(p) {
             "raw"
         } else if is_video(p) {
@@ -138,7 +144,7 @@ pub fn scan<R: tauri::Runtime>(app: &AppHandle<R>, card: &str, lib: &str) -> Res
 }
 
 /// Copy src→dst while hashing, then re-read dst and compare. Returns the hash.
-fn copy_verified(src: &Path, dst: &Path) -> Result<String, String> {
+pub(crate) fn copy_verified(src: &Path, dst: &Path) -> Result<String, String> {
     let tmp = dst.with_file_name(format!(".{}.part", dst.file_name().unwrap().to_string_lossy()));
     let res = (|| {
         let mut r = File::open(src).map_err(err)?;
@@ -171,12 +177,20 @@ fn copy_verified(src: &Path, dst: &Path) -> Result<String, String> {
     res
 }
 
-pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, items: Vec<Item>, lib: &str) -> Result<Report, String> {
+pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, items: Vec<Item>, lib: &str, backup: Option<String>, offset: i64) -> Result<Report, String> {
     let lib = Path::new(lib);
     let total: u64 = items.iter().map(|i| i.size).sum();
     let mut cache = HashCache::load(lib);
     let mut done = 0u64;
-    let mut rep = Report { copied: 0, skipped: 0, bytes: 0, failed: vec![], folders: vec![], photos: vec![] };
+    let mut rep = Report {
+        copied: 0, skipped: 0, bytes: 0, failed: vec![], folders: vec![], photos: vec![],
+        backup: backup.clone(), backup_copied: 0, backup_failed: vec![], backup_unavailable: false,
+    };
+    let backup = backup.map(PathBuf::from);
+    if backup.as_ref().is_some_and(|b| !b.is_dir()) {
+        rep.backup_unavailable = true;
+    }
+    let mut imported: Vec<PathBuf> = vec![];
     let mut folders = HashSet::new();
     let mut shots: Vec<(String, PathBuf)> = vec![];
     for it in &items {
@@ -198,7 +212,25 @@ pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, items: Vec<Item>, lib: &str) -
         match copy_verified(Path::new(&it.src), &dst) {
             Ok(hash) => {
                 if let Ok(m) = fs::metadata(&dst) {
-                    cache.put(&dst, &m, hash);
+                    cache.put(&dst, &m, hash.clone());
+                }
+                imported.push(dst.clone());
+                // Second copy, made from the fresh library copy so the card is read only once.
+                if let Some(b) = backup.as_ref().filter(|b| b.is_dir()) {
+                    let bdir = b.join(&it.dest_dir);
+                    let bdst = bdir.join(dst.file_name().unwrap());
+                    let same = fs::metadata(&bdst).map(|m| m.len() == it.size).unwrap_or(false);
+                    let res = if same {
+                        Ok(())
+                    } else {
+                        fs::create_dir_all(&bdir).map_err(err).and_then(|_| copy_verified(&dst, &bdst)).and_then(|h| {
+                            if h == hash { Ok(()) } else { Err("@err_checksum".to_string()) }
+                        })
+                    };
+                    match res {
+                        Ok(()) => rep.backup_copied += 1,
+                        Err(e) => rep.backup_failed.push(format!("{}: {e}", it.name)),
+                    }
                 }
                 rep.copied += 1;
                 rep.bytes += it.size;
@@ -212,6 +244,7 @@ pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, items: Vec<Item>, lib: &str) -
         done += it.size;
     }
     cache.save(lib);
+    crate::meta::record_import_shift(lib, &imported, offset)?;
     // A RAW stands in for its shot only when no JPEG/HEIF of the same name came with it.
     let viewable = |p: &Path| is_jpeg(p) || is_heif(p);
     let with_photo: HashSet<(String, String)> =
@@ -225,5 +258,48 @@ pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, items: Vec<Item>, lib: &str) -
     let mut f: Vec<String> = folders.into_iter().collect();
     f.sort();
     rep.folders = f;
+    Ok(rep)
+}
+
+#[derive(Serialize, Default)]
+pub struct SyncReport {
+    pub copied: usize,
+    pub skipped: usize,
+    pub bytes: u64,
+    pub failed: Vec<String>,
+}
+
+/// Bring the backup folder up to date with the whole library (review folders included), verifying every copy.
+/// Files already there with the same size are left alone; nothing in the backup is ever deleted.
+pub fn backup_sync<R: tauri::Runtime>(app: &AppHandle<R>, lib: &str, backup: &str) -> Result<SyncReport, String> {
+    let (lib, backup) = (Path::new(lib), Path::new(backup));
+    if !backup.is_dir() {
+        return Err("@err_no_backup".into());
+    }
+    let todo: Vec<(PathBuf, PathBuf, u64)> = walk_files(lib, true)
+        .into_iter()
+        .filter_map(|p| {
+            let size = fs::metadata(&p).ok()?.len();
+            let dst = backup.join(p.strip_prefix(lib).ok()?);
+            let same = fs::metadata(&dst).map(|m| m.len() == size).unwrap_or(false);
+            Some((p, dst, if same { u64::MAX } else { size }))
+        })
+        .collect();
+    let mut rep = SyncReport::default();
+    let total: u64 = todo.iter().filter(|t| t.2 != u64::MAX).map(|t| t.2).sum();
+    let mut done = 0u64;
+    for (src, dst, size) in todo {
+        if size == u64::MAX {
+            rep.skipped += 1;
+            continue;
+        }
+        emit(app, "backup", done, total, &src.file_name().unwrap().to_string_lossy());
+        match dst.parent().map(fs::create_dir_all).transpose().map_err(err).and_then(|_| copy_verified(&src, &dst)) {
+            Ok(_) => { rep.copied += 1; rep.bytes += size; }
+            Err(e) => rep.failed.push(format!("{}: {e}", src.strip_prefix(lib).unwrap_or(&src).display())),
+        }
+        done += size;
+    }
+    emit(app, "backup", total, total, "@done");
     Ok(rep)
 }
