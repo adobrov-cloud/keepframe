@@ -1,10 +1,11 @@
 use crate::emit;
+use crate::preview::{exif_for, jpeg_for};
 use crate::util::*;
 use image::{imageops, GrayImage, RgbImage};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
@@ -52,8 +53,8 @@ pub struct Info {
     pub ev: Option<f64>,
 }
 
-pub fn info(p: &Path) -> Info {
-    let ex = read_exif(p);
+pub fn info(cache: &Path, p: &Path) -> Info {
+    let ex = jpeg_for(cache, p).and_then(|src| exif_for(p, &src)).or_else(|| read_exif(p));
     let ex = ex.as_ref();
     Info {
         model: ex.and_then(|e| text(e, exif::Tag::Model)),
@@ -160,10 +161,11 @@ fn metrics(g: &GrayImage) -> (f32, f32, f32, f32, (f32, f32), String) {
     (mean, hi, lo, sharp, at, format!("{bits:016x}"))
 }
 
-fn analyze_one(p: &Path, lib: &Path, meta: &fs::Metadata) -> Option<Rec> {
-    let ex = read_exif(p);
+fn analyze_one(cache: &Path, p: &Path, lib: &Path, meta: &fs::Metadata) -> Option<Rec> {
+    let src = jpeg_for(cache, p)?;
+    let ex = exif_for(p, &src);
     let orient = ex.as_ref().and_then(|e| num(e, exif::Tag::Orientation)).unwrap_or(1.0) as u32;
-    let img = decode_jpeg(p, 800).ok()?;
+    let img = decode_jpeg(&src, 800).ok()?;
     let gray = imageops::grayscale(&img);
     let (mean, hi, lo, sharp, (u, v), dhash) = metrics(&gray);
     // Same rotation the viewer applies, so the point lands on the displayed image.
@@ -201,15 +203,37 @@ fn analyze_one(p: &Path, lib: &Path, meta: &fs::Metadata) -> Option<Rec> {
     })
 }
 
-pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, lib: &str) -> Result<Vec<Rec>, String> {
+/// One file per shot: the JPEG (or HEIF where it can be shown), else the RAW for RAW-only shots.
+fn shots(lib: &Path) -> Vec<PathBuf> {
+    let all = walk_media(lib, false);
+    let viewable = |p: &Path| is_jpeg(p) || (is_heif(p) && cfg!(target_os = "macos"));
+    let key = |dir: &Path, p: &Path| (dir.to_path_buf(), stem(p));
+    let have: HashSet<(PathBuf, String)> = all.iter().filter(|p| viewable(p)).map(|p| key(p.parent().unwrap(), p)).collect();
+    all.iter()
+        .filter(|p| {
+            if viewable(p) {
+                return true;
+            }
+            if !is_raw(p) {
+                return false;
+            }
+            let dir = p.parent().unwrap();
+            let name = dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let base = name.strip_suffix(" RAW").map(|b| dir.with_file_name(b)).unwrap_or_else(|| dir.to_path_buf());
+            !have.contains(&key(&base, p)) && !have.contains(&key(dir, p))
+        })
+        .cloned()
+        .collect()
+}
+
+pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, cache_dir: &Path, lib: &str) -> Result<Vec<Rec>, String> {
     let lib = Path::new(lib);
     let cache_file = state_dir(lib).join("analysis.json");
     let cache: HashMap<String, Rec> =
         fs::read(&cache_file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
 
-    let files: Vec<(PathBuf, fs::Metadata)> = walk_media(lib, false)
+    let files: Vec<(PathBuf, fs::Metadata)> = shots(lib)
         .into_iter()
-        .filter(|p| is_jpeg(p))
         .filter_map(|p| fs::metadata(&p).ok().map(|m| (p, m)))
         .collect();
     let total = files.len() as u64;
@@ -220,7 +244,7 @@ pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, lib: &str) -> Result<Vec<Rec>,
             let key = p.to_string_lossy().to_string();
             let r = match cache.get(&key) {
                 Some(r) if r.size == m.len() && r.mtime == mtime_secs(m) && r.sharp_u.is_some() => Some(r.clone()),
-                _ => analyze_one(p, lib, m),
+                _ => analyze_one(cache_dir, p, lib, m),
             };
             let d = done.fetch_add(1, Ordering::Relaxed) + 1;
             if d % 10 == 0 || d == total {
@@ -248,8 +272,9 @@ pub fn thumb(cache_dir: &Path, p: &Path, size: u32) -> Result<String, String> {
     fs::create_dir_all(&dir).map_err(err)?;
     let out = dir.join(format!("{}_{size}.jpg", &hex::encode(h.finalize())[..20]));
     if !out.exists() {
-        let img = decode_jpeg(p, size)?;
-        let orient = read_exif(p).and_then(|e| num(&e, exif::Tag::Orientation)).unwrap_or(1.0) as u32;
+        let src = jpeg_for(cache_dir, p).ok_or("no preview")?;
+        let img = decode_jpeg(&src, size)?;
+        let orient = exif_for(p, &src).and_then(|e| num(&e, exif::Tag::Orientation)).unwrap_or(1.0) as u32;
         let img = match orient {
             3 | 4 => imageops::rotate180(&img),
             5 | 6 => imageops::rotate90(&img),

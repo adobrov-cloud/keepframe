@@ -4,9 +4,19 @@ use std::fs::{self, File};
 use std::io::{self, BufReader, Read};
 use std::path::{Path, PathBuf};
 
-pub const RAW_EXT: &[&str] = &["raf", "fp2", "dng", "cr2", "cr3", "nef", "arw", "orf", "rw2"];
-pub const IMG_EXT: &[&str] = &["jpg", "jpeg", "hif", "heic", "png"];
-pub const VID_EXT: &[&str] = &["mov", "mp4", "avi", "mts"];
+pub const RAW_EXT: &[&str] = &[
+    "raf", "fp2", "dng", "cr2", "cr3", "crw", "nef", "nrw", "arw", "srf", "sr2", "orf", "rw2", "rwl", "raw", "pef", "x3f",
+    "3fr", "fff", "iiq", "srw", "mrw", "kdc", "dcr", "erf", "mef", "mos", "gpr",
+];
+pub const IMG_EXT: &[&str] = &["jpg", "jpeg", "hif", "heic", "heif", "png", "tif", "tiff", "webp"];
+pub const VID_EXT: &[&str] = &["mov", "mp4", "m4v", "avi", "mts", "m2ts", "mxf", "3gp", "mkv", "mpg", "wmv", "insv"];
+
+// Card housekeeping that is not the user's content: camera databases, OS folders, thumbnails/proxies the camera
+// regenerates. Everything else on the card counts, so "safe to format" really means everything was copied.
+const SKIP_DIRS: &[&str] = &["system volume information", "$recycle.bin", "lost.dir", "thmbnl", "avf_info", "misc", "canonmsc"];
+const SKIP_EXT: &[&str] = &["ctg", "bdm", "mpl", "cpi", "clpi", "bnp", "inp", "int", "mrk", "dat", "bin", "idx", "db", "tmp", "ind", "thm", "lrv", "lrf"];
+const SKIP_NAMES: &[&str] = &["mediapro.xml", "cueup.xml", "status.xml", "index.dat"];
+
 /// Review folders are named "<prefix> (<kind>)"; both UI languages are recognised.
 pub const REVIEW_PREFIXES: &[&str] = &["_на проверку", "_review"];
 pub const STATE_DIR: &str = ".photo-sorter";
@@ -38,8 +48,12 @@ pub fn is_media(p: &Path) -> bool {
     RAW_EXT.contains(&e.as_str()) || IMG_EXT.contains(&e.as_str()) || VID_EXT.contains(&e.as_str())
 }
 
-/// All media files under `root`, skipping hidden entries and (optionally) review folders.
-pub fn walk_media(root: &Path, include_review: bool) -> Vec<PathBuf> {
+pub fn is_heif(p: &Path) -> bool {
+    matches!(ext(p).as_str(), "hif" | "heic" | "heif")
+}
+
+/// All files under `root`, skipping hidden entries and (optionally) review folders.
+pub fn walk_files(root: &Path, include_review: bool) -> Vec<PathBuf> {
     walkdir::WalkDir::new(root)
         .into_iter()
         .filter_entry(|e| {
@@ -53,8 +67,49 @@ pub fn walk_media(root: &Path, include_review: bool) -> Vec<PathBuf> {
             include_review || !(e.file_type().is_dir() && is_review_name(&n))
         })
         .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_file() && is_media(e.path()))
+        .filter(|e| e.file_type().is_file())
         .map(|e| e.into_path())
+        .collect()
+}
+
+/// All media files under `root`, skipping hidden entries and (optionally) review folders.
+pub fn walk_media(root: &Path, include_review: bool) -> Vec<PathBuf> {
+    walk_files(root, include_review).into_iter().filter(|p| is_media(p)).collect()
+}
+
+/// What on a card has to be imported (and verified before formatting): everything inside DCIM except housekeeping,
+/// plus photos and videos the camera keeps elsewhere (Sony/Panasonic/Canon put video under PRIVATE) with the
+/// metadata files that sit next to those videos.
+pub fn card_files(card: &Path) -> Vec<PathBuf> {
+    let files: Vec<PathBuf> = walkdir::WalkDir::new(card)
+        .into_iter()
+        .filter_entry(|e| {
+            if e.depth() == 0 {
+                return true;
+            }
+            let n = e.file_name().to_string_lossy().to_lowercase();
+            !n.starts_with('.') && !(e.file_type().is_dir() && SKIP_DIRS.contains(&n.as_str()))
+        })
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .map(|e| e.into_path())
+        .filter(|p| {
+            let n = p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+            !SKIP_EXT.contains(&ext(p).as_str()) && !SKIP_NAMES.contains(&n.as_str())
+        })
+        .collect();
+    let in_dcim = |p: &Path| {
+        p.strip_prefix(card)
+            .ok()
+            .and_then(|r| r.components().next())
+            .is_some_and(|c| c.as_os_str().to_string_lossy().eq_ignore_ascii_case("DCIM"))
+    };
+    let video_dirs: std::collections::HashSet<PathBuf> =
+        files.iter().filter(|p| is_video(p)).filter_map(|p| p.parent().map(Path::to_path_buf)).collect();
+    files
+        .iter()
+        .filter(|p| in_dcim(p) || is_media(p) || p.parent().is_some_and(|d| video_dirs.contains(d)))
+        .cloned()
         .collect()
 }
 

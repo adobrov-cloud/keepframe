@@ -144,9 +144,18 @@ pub fn list_review(lib: &str) -> Vec<ReviewItem> {
     let lib = Path::new(lib);
     let mut out = vec![];
     for (kind, root) in review_roots(lib) {
-        for p in walk_media(&root, true) {
+        let files = walk_media(&root, true);
+        let photos: std::collections::HashSet<(PathBuf, String)> =
+            files.iter().filter(|p| !is_raw(p)).map(|p| (p.parent().unwrap().to_path_buf(), stem(p))).collect();
+        for p in files.iter().cloned() {
+            // A RAW rides along with its photo; only RAW-only shots are listed on their own.
             if is_raw(&p) {
-                continue;
+                let dir = p.parent().unwrap();
+                let name = dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                let base = name.strip_suffix(" RAW").map(|b| dir.with_file_name(b)).unwrap_or_else(|| dir.to_path_buf());
+                if photos.contains(&(base, stem(&p))) || photos.contains(&(dir.to_path_buf(), stem(&p))) {
+                    continue;
+                }
             }
             let Ok(rel) = p.strip_prefix(&root) else { continue };
             let parent = p.parent().unwrap();

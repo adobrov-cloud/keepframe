@@ -1,5 +1,6 @@
 mod analyze;
 mod import;
+mod preview;
 mod review;
 mod util;
 mod verify;
@@ -149,7 +150,8 @@ async fn verify_card(app: AppHandle, card: String, library: String) -> Result<ve
 
 #[tauri::command]
 async fn analyze(app: AppHandle, library: String) -> Result<Vec<analyze::Rec>, String> {
-    blocking(move || analyze::run(&app, &library)).await
+    let cache = app.path().app_cache_dir().map_err(err)?;
+    blocking(move || analyze::run(&app, &cache, &library)).await
 }
 
 #[tauri::command]
@@ -159,8 +161,9 @@ async fn thumb(app: AppHandle, path: String, size: u32) -> Result<String, String
 }
 
 #[tauri::command]
-async fn photo_info(path: String) -> Result<analyze::Info, String> {
-    blocking(move || Ok(analyze::info(Path::new(&path)))).await
+async fn photo_info(app: AppHandle, path: String) -> Result<analyze::Info, String> {
+    let cache = app.path().app_cache_dir().map_err(err)?;
+    blocking(move || Ok(analyze::info(&cache, Path::new(&path)))).await
 }
 
 #[tauri::command]
@@ -232,11 +235,16 @@ mod tests {
         let app = tauri::test::mock_app();
         let h = app.handle();
 
+        let mut on_card: Vec<_> = crate::util::card_files(Path::new(&card))
+            .iter().map(|p| p.strip_prefix(&card).unwrap().to_string_lossy().to_string()).collect();
+        on_card.sort();
+        println!("card files: {on_card:?}");
         let plan = crate::import::scan(h, &card, &lib).unwrap();
         println!("scan: total={} already={} new={} days={:?}", plan.total, plan.already, plan.items.len(),
-            plan.days.iter().map(|d| (&d.folder, d.photos, d.raws, d.videos)).collect::<Vec<_>>());
+            plan.days.iter().map(|d| (&d.folder, d.photos, d.raws, d.videos, d.others)).collect::<Vec<_>>());
         let rep = crate::import::run(h, plan.items, &lib).unwrap();
-        println!("import: copied={} skipped={} failed={:?} folders={:?}", rep.copied, rep.skipped, rep.failed, rep.folders);
+        println!("import: copied={} skipped={} failed={:?} folders={:?} photos={:?}", rep.copied, rep.skipped, rep.failed, rep.folders,
+            rep.photos.iter().map(|p| Path::new(p).file_name().unwrap().to_string_lossy().to_string()).collect::<Vec<_>>());
         let again = crate::import::scan(h, &card, &lib).unwrap();
         assert_eq!(again.items.len(), 0, "rescan after import must find nothing new");
 
@@ -245,8 +253,14 @@ mod tests {
         assert!(v.missing.is_empty());
 
         let t0 = std::time::Instant::now();
-        let recs = crate::analyze::run(h, &lib).unwrap();
+        let recs = crate::analyze::run(h, &Path::new(&lib).join(".thumbcache"), &lib).unwrap();
         println!("analyze: {} recs in {:?}", recs.len(), t0.elapsed());
+        for raw in recs.iter().filter(|r| crate::util::is_raw(Path::new(&r.path))) {
+            let t0 = std::time::Instant::now();
+            let th = crate::analyze::thumb(Path::new(&lib).join(".thumbcache").as_path(), Path::new(&raw.path), 1400).unwrap();
+            let dims = image::image_dimensions(&th).unwrap();
+            println!("raw-only shot: {} iso={:?} t={:?} orient={} sharp={} thumb={dims:?} in {:?}", raw.name, raw.iso, raw.t, raw.orient, raw.sharp, t0.elapsed());
+        }
         let r = &recs[0];
         println!("sample: {} sharp_at={:?},{:?} iso={:?} f={:?} t={:?} fl={:?} ts={:?} orient={} vert={} sharp={} dhash={}",
             r.name, r.sharp_u, r.sharp_v, r.iso, r.f, r.t, r.fl, r.ts, r.orient, r.vertical, r.sharp, r.dhash);

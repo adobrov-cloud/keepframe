@@ -126,8 +126,9 @@ function fullRes(img) {
       im.onerror = rej;
       im.src = src;
     });
-    fullCache.set(path, load(convertFileSrc(path))
-      .catch(() => invoke('thumb', { path, size: 4000 }).then(convertFileSrc).then(load))
+    // RAW can't be shown by the webview: go straight to the camera's embedded preview at full size.
+    const viaBackend = () => invoke('thumb', { path, size: 8000 }).then(convertFileSrc).then(load);
+    fullCache.set(path, (isRaw(path) ? viaBackend() : load(convertFileSrc(path)).catch(viaBackend))
       .catch(() => { fullCache.delete(path); return null; }));
   }
   img._full = fullCache.get(path).then(show);
@@ -386,7 +387,8 @@ function runImport() {
   });
 }
 
-const isJpg = n => /\.jpe?g$/i.test(n);
+const isRaw = n => /\.(raf|fp2|dng|cr2|cr3|crw|nef|nrw|arw|srf|sr2|orf|rw2|rwl|raw|pef|x3f|3fr|fff|iiq|srw|mrw|kdc|dcr|erf|mef|mos|gpr)$/i.test(n);
+const isViewable = n => /\.(jpe?g|hif|heic|heif)$/i.test(n);
 function fmtDay(d) {
   const dt = new Date(d + 'T12:00:00');
   return isNaN(dt) ? d : dt.toLocaleDateString(LANG, { weekday: 'short', day: 'numeric', month: 'long' });
@@ -419,12 +421,18 @@ function viewImport(main) {
   </div>`;
   if (p.items.length) {
     const byDay = {};
-    p.items.forEach(it => { if (it.kind === 'photo' && isJpg(it.name)) (byDay[it.dest_dir] ||= []).push(it); });
+    // Preview strip: the day's JPEG/HEIF shots, or its RAWs when shot RAW-only.
+    const raws = {};
+    p.items.forEach(it => {
+      if (it.kind === 'photo' && isViewable(it.name)) (byDay[it.dest_dir] ||= []).push(it);
+      if (it.kind === 'raw') (raws[it.dest_dir.replace(/ RAW$/, '')] ||= []).push(it);
+    });
+    for (const [d, list] of Object.entries(raws)) if (!byDay[d]) byDay[d] = list;
     html += `<div class="days">${p.days.map(d => {
       const ph = byDay[d.folder] || [], show = ph.slice(0, 14);
       return `<div class="day">
         <div class="day-h"><b>${esc(d.folder)}</b><span class="mut">${fmtDay(d.date)}</span><span class="grow"></span>
-          <span class="mut small">${t('day_counts', d.photos, d.raws, d.videos)} · ${gb(d.bytes)}</span></div>
+          <span class="mut small">${t('day_counts', d.photos, d.raws, d.videos, d.others)} · ${gb(d.bytes)}</span></div>
         ${show.length ? `<div class="filmrow">${show.map(it => `<img data-path="${esc(it.src)}" alt="">`).join('')}
           ${ph.length > show.length ? `<span class="morebox">${t('more', ph.length - show.length)}</span>` : ''}</div>` : ''}
       </div>`;
@@ -766,7 +774,8 @@ function swipeBind(main, S) {
   fillExif(r);
   const lp = $('#loupe', main);
   if (lp) {
-    const img = lp.querySelector('img'), src = convertFileSrc(r.path), im = new Image();
+    const img = lp.querySelector('img'), im = new Image();
+    let src;
     im.onload = () => {
       if (!lp.isConnected) return;
       const w = lp.clientWidth, h = lp.clientHeight;
@@ -775,7 +784,8 @@ function swipeBind(main, S) {
       img.src = src;
       lp.hidden = false;
     };
-    im.src = src;
+    (isRaw(r.path) ? invoke('thumb', { path: r.path, size: 8000 }).then(convertFileSrc) : Promise.resolve(convertFileSrc(r.path)))
+      .then(u => { src = u; im.src = u; }).catch(() => {});
     lp.onclick = () => { Z.s = 1; zoom1to1(card, apply, r.sharp_u, r.sharp_v); };
   }
 }

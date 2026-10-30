@@ -55,8 +55,8 @@ pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, card: &str, lib: &str) -> Resu
     let card = Path::new(card);
     let lib = Path::new(lib);
 
-    // 1. Card: every media file (including ones the camera put outside DCIM).
-    let card_files = walk_media(card, true);
+    // 1. Card: everything the import takes, i.e. all of the user's files, not only known formats.
+    let card_files = card_files(card);
     let card_total: u64 = card_files.iter().filter_map(|p| fs::metadata(p).ok()).map(|m| m.len()).sum();
     let done = AtomicU64::new(0);
     let card_hashes: Vec<(String, u64, String)> = card_files
@@ -76,7 +76,7 @@ pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, card: &str, lib: &str) -> Resu
 
     // 2. Library: hash what is new since the last run.
     let mut cache = HashCache::load(lib);
-    let lib_files: Vec<_> = walk_media(lib, true)
+    let lib_files: Vec<_> = walk_files(lib, true)
         .into_iter()
         .filter_map(|p| fs::metadata(&p).ok().map(|m| (p, m)))
         .collect();

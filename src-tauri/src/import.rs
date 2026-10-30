@@ -28,6 +28,8 @@ pub struct Day {
     pub photos: usize,
     pub raws: usize,
     pub videos: usize,
+    /// Sidecars and formats the app doesn't know: copied next to the day's photos all the same.
+    pub others: usize,
     pub bytes: u64,
 }
 
@@ -47,23 +49,18 @@ pub struct Report {
     pub bytes: u64,
     pub failed: Vec<String>,
     pub folders: Vec<String>,
-    /// Imported JPEGs in shooting order, for the swipe pass.
+    /// One viewable file per imported shot (JPEG/HEIF, or the RAW when shot RAW-only), in shooting order.
     pub photos: Vec<String>,
-}
-
-fn card_root(card: &Path) -> PathBuf {
-    let d = card.join("DCIM");
-    if d.is_dir() { d } else { card.to_path_buf() }
 }
 
 pub fn scan<R: tauri::Runtime>(app: &AppHandle<R>, card: &str, lib: &str) -> Result<Plan, String> {
     let card = Path::new(card);
     let lib = Path::new(lib);
     emit(app, "scan", 0, 0, "@scan_card");
-    let files = walk_media(&card_root(card), false);
+    let files = card_files(card);
 
     emit(app, "scan", 0, 0, "@scan_lib");
-    let have: HashSet<(String, u64)> = walk_media(lib, true)
+    let have: HashSet<(String, u64)> = walk_files(lib, true)
         .into_iter()
         .filter_map(|p| {
             let size = fs::metadata(&p).ok()?.len();
@@ -92,7 +89,15 @@ pub fn scan<R: tauri::Runtime>(app: &AppHandle<R>, card: &str, lib: &str) -> Res
         }
         let dt = jpg_dates.get(&stem(p)).cloned().or_else(|| mtime_local(p));
         let Some(dt) = dt else { continue };
-        let kind = if is_raw(p) { "raw" } else if is_video(p) { "video" } else { "photo" };
+        let kind = if is_raw(p) {
+            "raw"
+        } else if is_video(p) {
+            "video"
+        } else if is_media(p) {
+            "photo"
+        } else {
+            "other"
+        };
         let folder = day_folder(dt.date());
         items.push(Item {
             src: p.to_string_lossy().to_string(),
@@ -118,6 +123,7 @@ pub fn scan<R: tauri::Runtime>(app: &AppHandle<R>, card: &str, lib: &str) -> Res
         match it.kind.as_str() {
             "raw" => d.raws += 1,
             "video" => d.videos += 1,
+            "other" => d.others += 1,
             _ => d.photos += 1,
         }
         d.bytes += it.size;
@@ -172,6 +178,7 @@ pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, items: Vec<Item>, lib: &str) -
     let mut done = 0u64;
     let mut rep = Report { copied: 0, skipped: 0, bytes: 0, failed: vec![], folders: vec![], photos: vec![] };
     let mut folders = HashSet::new();
+    let mut shots: Vec<(String, PathBuf)> = vec![];
     for it in &items {
         emit(app, "import", done, total, &it.name);
         let dir = lib.join(&it.dest_dir);
@@ -196,8 +203,8 @@ pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, items: Vec<Item>, lib: &str) -
                 rep.copied += 1;
                 rep.bytes += it.size;
                 folders.insert(it.dest_dir.trim_end_matches(" RAW").to_string());
-                if is_jpeg(&dst) {
-                    rep.photos.push(dst.to_string_lossy().into());
+                if it.kind == "photo" || it.kind == "raw" {
+                    shots.push((it.date.clone(), dst.clone()));
                 }
             }
             Err(e) => rep.failed.push(format!("{}: {e}", it.name)),
@@ -205,6 +212,15 @@ pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, items: Vec<Item>, lib: &str) -
         done += it.size;
     }
     cache.save(lib);
+    // A RAW stands in for its shot only when no JPEG/HEIF of the same name came with it.
+    let viewable = |p: &Path| is_jpeg(p) || is_heif(p);
+    let with_photo: HashSet<(String, String)> =
+        shots.iter().filter(|(_, p)| viewable(p)).map(|(d, p)| (d.clone(), stem(p))).collect();
+    rep.photos = shots
+        .iter()
+        .filter(|(d, p)| viewable(p) || (is_raw(p) && !with_photo.contains(&(d.clone(), stem(p)))))
+        .map(|(_, p)| p.to_string_lossy().into())
+        .collect();
     emit(app, "import", total, total, "@done");
     let mut f: Vec<String> = folders.into_iter().collect();
     f.sort();
