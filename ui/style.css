@@ -247,6 +247,8 @@ kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 4
 /* zoom */
 .zoom { cursor: zoom-in; }
 .zoom.zoomed { cursor: crosshair; }
+/* In bursts a click picks the shot, so keep the ordinary pointer there. */
+.shot.zoom, .shot.zoom.zoomed { cursor: pointer; }
 .zoom img.zimg { transition: transform .06s linear; will-change: transform; }
 .zbadge { position: absolute; top: 8px; right: 8px; background: #000c; color: #fff; padding: 2px 7px; border-radius: 5px;
   font-size: 11px; font-variant-numeric: tabular-nums; z-index: 2; }
