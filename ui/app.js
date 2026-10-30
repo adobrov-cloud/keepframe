@@ -165,6 +165,8 @@ function runImport() {
     state.newFolders = rep.folders;
     state.recs = null;
     state.plan = await invoke('scan_import', { card: state.card, library: state.lib });
+  }).then(() => {
+    if (mindfulOn() && state.report?.photos.length) startMindful(state.report.photos);
   });
 }
 
@@ -181,6 +183,7 @@ function viewImport(main) {
       <div>Скопировано ${files(r.copied)} (${gb(r.bytes)})${r.skipped ? `, пропущено ${r.skipped} — уже были` : ''}.</div>
       ${r.failed.length ? `<div class="scroll small" style="margin-top:8px">${r.failed.map(esc).join('<br>')}</div>` : ''}
       <div class="row" style="margin-top:12px">
+        ${r.photos.length ? `<button class="btn" id="goMindful">Пролистать ${shots(r.photos.length)} — оставить / в отсев</button>` : ''}
         <button class="btn" id="goDupes">Найти дубли в новых папках</button>
         <button class="btn" id="goVerify">Проверить карту перед форматированием</button>
       </div></div>`;
@@ -198,6 +201,8 @@ function viewImport(main) {
       ${p.days.map(d => `<tr><td>${esc(d.folder)}</td><td class="mut">${d.date.split('-').reverse().join('.')}</td>
         <td class="n">${d.photos || ''}</td><td class="n">${d.raws || ''}</td><td class="n">${d.videos || ''}</td><td class="n">${gb(d.bytes)}</td></tr>`).join('')}
     </table></div>
+    <label class="mindful"><input type="checkbox" id="mindful" ${mindfulOn() ? 'checked' : ''}>
+      <span><b>Осознанный импорт</b><br><span class="mut small">После копирования сразу пролистать новые кадры: → оставить, ← в «_на проверку (отсев)» вместе с RAW.</span></span></label>
     <div class="row"><button class="btn primary" id="doImport" ${state.busy ? 'disabled' : ''}>Импортировать ${files(p.items.length)} · ${gb(p.bytes)}</button>
     <button class="btn" id="rescan" ${state.busy ? 'disabled' : ''}>Пересканировать</button></div>`;
   } else if (!state.report) {
@@ -210,6 +215,11 @@ function viewImport(main) {
 function bindImport(main) {
   bindChips(main, scan);
   $('#doImport', main)?.addEventListener('click', runImport);
+  $('#mindful', main)?.addEventListener('change', e => setMindful(e.target.checked));
+  $('#goMindful', main)?.addEventListener('click', () => {
+    const M = state.mindful;
+    M?.items.length && M.i < M.items.length ? go('mindful') : startMindful(state.report.photos);
+  });
   $('#rescan', main)?.addEventListener('click', () => { state.plan = null; scan(); });
   $('#goVerify', main)?.addEventListener('click', () => go('verify'));
   $('#goDupes', main)?.addEventListener('click', () => { state.scope.dupes = 'new'; state.dupes.groups = []; go('dupes'); });
@@ -409,9 +419,6 @@ function saveKept(set) {
   try { localStorage.setItem(keptKey(), JSON.stringify([...set])); } catch {}
 }
 
-function blurryOut() {
-  return [...state.blurry.dec].filter(([, d]) => d === 'out').map(([p]) => p);
-}
 
 function viewBlurry(main) {
   const title = 'Смазанные', sub = 'Кадры, которые заметно мягче остальных в своей папке. Иногда это просто размытый фон — решайте глазами.';
@@ -427,7 +434,7 @@ function viewBlurry(main) {
     B.scope = state.scope.blurry;
     B.stale = false;
   }
-  const out = blurryOut().length, kept = B.dec.size - out;
+  const out = swipeOut(B).length, kept = B.dec.size - out;
   const head = `<div class="rv-head">${scopeSelect('scope', state.scope.blurry)}
       ${B.i < B.items.length ? `<b>Кадр ${B.i + 1} из ${B.items.length}</b>` : ''}
       <span class="mut"><span style="color:var(--bad)">✕ ${out}</span> · <span style="color:var(--ok)">✓ ${kept}</span></span>
@@ -456,58 +463,78 @@ function viewBlurry(main) {
         ${out ? `<button class="btn primary" id="done" ${state.busy ? 'disabled' : ''}>Убрать ${shots(out)} в проверку</button>` : `<button class="btn primary" id="done">Готово</button>`}
       </div></div>`;
     bind();
-    $('#back1', main).onclick = () => blurryBack();
+    $('#back1', main).onclick = () => swipeBack(B);
     $('#done', main).onclick = applyBlurry;
     return;
   }
 
-  const r = B.items[B.i], nx = B.items[B.i + 1];
+  main.innerHTML = head + swipeStage(B, r => `резкость ${Math.round(r.rel * 100)}% от обычной для папки`);
+  bind();
+  swipeBind(main, B);
+}
+
+// ---------- swipe (shared by blurry and mindful import) ----------
+
+function swipeStage(S, info) {
+  const r = S.items[S.i], nx = S.items[S.i + 1];
   hoverPath = r.path;
-  main.innerHTML = `${head}
-    <div class="tinder">
+  return `<div class="tinder">
       ${nx ? `<div class="tcard under"><img data-path="${esc(nx.path)}" alt=""></div>` : ''}
       <div class="tcard" id="tcard">
         <img data-path="${esc(r.path)}" alt="">
-        <span class="stamp s-out">В ПРОВЕРКУ</span><span class="stamp s-keep">ОСТАВИТЬ</span>
-        <span class="fname">${esc(r.folder)} · ${esc(r.name)} · резкость ${Math.round(r.rel * 100)}% от обычной для папки</span>
+        <span class="stamp s-out">${S.outLabel || 'В ПРОВЕРКУ'}</span><span class="stamp s-keep">ОСТАВИТЬ</span>
+        <span class="fname">${esc(r.folder)} · ${esc(r.name)}${info ? ' · ' + info(r) : ''}</span>
       </div>
     </div>
     <div class="tbtns">
-      <button class="round bad" id="no" title="В проверку (←)">✕</button>
-      <button class="round" id="undo1" title="Вернуть предыдущий (Backspace)" ${B.i ? '' : 'disabled'}>↶</button>
+      <button class="round bad" id="no" title="Убрать (←)">✕</button>
+      <button class="round" id="undo1" title="Вернуть предыдущий (Backspace)" ${S.i ? '' : 'disabled'}>↶</button>
       <button class="round ok" id="yes" title="Оставить (→)">✓</button>
     </div>
-    <div class="rv-foot" style="justify-content:center"><span><kbd>←</kbd> в проверку</span><span><kbd>→</kbd> оставить</span>
+    <div class="rv-foot" style="justify-content:center"><span><kbd>←</kbd> ${S.outHint || 'в проверку'}</span><span><kbd>→</kbd> оставить</span>
       <span><kbd>⌫</kbd> вернуть предыдущий</span><span><kbd>Z</kbd> удерживать — на весь экран</span><span>можно тянуть карточку мышью</span></div>`;
-  bind();
+}
+function swipeBind(main, S) {
   fillThumbs(main, 1400);
-  B.items.slice(B.i + 2, B.i + 5).forEach(x => thumb(x.path, 1400));
-  $('#no', main).onclick = () => blurryDecide('out');
-  $('#yes', main).onclick = () => blurryDecide('keep');
-  $('#undo1', main).onclick = () => blurryBack();
-  dragCard($('#tcard', main));
+  S.items.slice(S.i + 2, S.i + 5).forEach(x => thumb(x.path, 1400));
+  $('#no', main).onclick = () => swipeDecide(S, 'out');
+  $('#yes', main).onclick = () => swipeDecide(S, 'keep');
+  $('#undo1', main).onclick = () => swipeBack(S);
+  dragCard($('#tcard', main), S);
+}
+function swipeOut(S) {
+  return [...S.dec].filter(([, d]) => d === 'out').map(([p]) => p);
 }
 
-let flying = false;
-function blurryDecide(d) {
-  const B = state.blurry, card = $('#tcard');
-  if (flying || !card || B.i >= B.items.length) return;
-  B.dec.set(B.items[B.i].path, d);
-  flying = true;
+let flying = null;
+// A keypress during the fly-out finishes it at once, so fast swiping never drops a decision.
+function land() {
+  if (!flying) return;
+  const f = flying;
+  flying = null;
+  clearTimeout(f.timer);
+  f.S.i++;
+  render();
+}
+function swipeDecide(S, d) {
+  land();
+  const card = $('#tcard');
+  if (!card || S.i >= S.items.length) return;
+  S.dec.set(S.items[S.i].path, d);
   card.style.transition = 'transform .22s ease-in, opacity .22s';
   card.style.transform = `translateX(${d === 'out' ? -130 : 130}%) rotate(${d === 'out' ? -18 : 18}deg)`;
   card.style.opacity = '0';
   card.classList.add(d === 'out' ? 'go-out' : 'go-keep');
-  setTimeout(() => { flying = false; B.i++; render(); }, 200);
+  flying = { S, timer: setTimeout(land, 200) };
 }
-function blurryBack() {
-  const B = state.blurry;
-  if (flying || !B.i) return;
-  B.i--;
-  B.dec.delete(B.items[B.i].path);
+function swipeBack(S) {
+  land();
+  if (!S.i) return;
+  S.i--;
+  S.dec.delete(S.items[S.i].path);
   render();
 }
-function dragCard(card) {
+function dragCard(card, S) {
   let x0 = null, dx = 0;
   card.onpointerdown = e => { x0 = e.clientX; dx = 0; card.setPointerCapture(e.pointerId); card.style.transition = 'none'; };
   card.onpointermove = e => {
@@ -520,14 +547,84 @@ function dragCard(card) {
   card.onpointerup = card.onpointercancel = () => {
     if (x0 === null) return;
     x0 = null;
-    if (Math.abs(dx) > 120) return blurryDecide(dx < 0 ? 'out' : 'keep');
+    if (Math.abs(dx) > 120) return swipeDecide(S, dx < 0 ? 'out' : 'keep');
     card.style.transition = 'transform .18s';
     card.style.transform = '';
     card.classList.remove('go-out', 'go-keep');
   };
 }
+
+// ---------- mindful import ----------
+
+function mindfulOn() {
+  try { return localStorage.getItem('mindful') === '1'; } catch { return false; }
+}
+function setMindful(v) {
+  try { localStorage.setItem('mindful', v ? '1' : '0'); } catch {}
+}
+function startMindful(photos) {
+  state.mindful = {
+    items: photos.map(p => {
+      const parts = p.split(/[\\/]/);
+      return { path: p, name: parts.pop(), folder: parts.pop() };
+    }),
+    i: 0,
+    dec: new Map(),
+    outLabel: 'В ОТСЕВ',
+    outHint: 'в отсев',
+  };
+  go('mindful');
+}
+
+function viewMindful(main) {
+  const M = state.mindful;
+  if (M && !M.items.length && state.busy) {
+    main.innerHTML = `<h1>Отбор после импорта</h1><div class="empty"><span class="spin"></span><h2>Переношу в отсев…</h2></div>`;
+    return;
+  }
+  if (!M?.items.length) {
+    main.innerHTML = `<h1>Отбор после импорта</h1><div class="empty"><div class="big">◎</div><h2>Нечего отбирать</h2>
+      <p>Включите «осознанный импорт» на экране импорта — после копирования сюда попадут новые кадры.</p></div>`;
+    return;
+  }
+  main.classList.add('fill');
+  const out = swipeOut(M).length, kept = M.dec.size - out;
+  const head = `<div class="rv-head"><b>Отбор после импорта</b>
+      ${M.i < M.items.length ? `<span class="mut">кадр ${M.i + 1} из ${M.items.length}</span>` : ''}
+      <span class="mut"><span style="color:var(--bad)">✕ ${out}</span> · <span style="color:var(--ok)">✓ ${kept}</span></span>
+      <span class="grow"></span>
+      ${M.i < M.items.length && out ? `<button class="btn" id="apply">Применить сейчас (${out})</button>` : ''}</div>`;
+  if (M.i >= M.items.length) {
+    const rest = M.items.length;
+    main.innerHTML = `${head}<div class="empty"><div class="big">🎉</div><h2>Все ${shots(rest)} просмотрены</h2>
+      <p>${out ? `${shots(kept)} остаются в папках по дням, ${shots(out)} вместе с RAW уйдут в «_на проверку (отсев)».` : 'Вы всё оставили — переносить нечего.'}</p>
+      <div class="row" style="justify-content:center;margin-top:16px">
+        <button class="btn" id="back1">← Вернуться к последнему</button>
+        <button class="btn primary" id="done" ${state.busy ? 'disabled' : ''}>${out ? `Убрать ${shots(out)} в отсев` : 'Готово'}</button>
+      </div></div>`;
+    $('#back1', main).onclick = () => swipeBack(M);
+    $('#done', main).onclick = applyMindful;
+    return;
+  }
+  main.innerHTML = head + swipeStage(M);
+  $('#apply', main)?.addEventListener('click', applyMindful);
+  swipeBind(main, M);
+}
+function applyMindful() {
+  const M = state.mindful, out = swipeOut(M);
+  if (!out.length) { M.items = M.items.slice(M.i); M.i = 0; M.dec = new Map(); if (!M.items.length) { state.mindful = null; go('import'); } else render(); return; }
+  // Keep the undecided tail so the pass can continue after an early apply.
+  const done = new Set(M.items.slice(0, M.i).map(r => r.path));
+  M.items = M.items.filter(r => !done.has(r.path));
+  M.i = 0;
+  M.dec = new Map();
+  if (state.report) state.report.photos = state.report.photos.filter(p => !out.includes(p));
+  return applyMoves('отсев', out).then(() => { if (!M.items.length) { state.mindful = null; go('import'); } });
+}
+
 function applyBlurry() {
   const B = state.blurry;
+  const blurryOut = () => swipeOut(B);
   const keptNow = [...B.dec].filter(([, d]) => d === 'keep').map(([p]) => p);
   if (keptNow.length) { keptNow.forEach(p => B.kept.add(p)); saveKept(B.kept); }
   const out = blurryOut();
@@ -542,7 +639,7 @@ function applyMoves(kind, paths) {
   return task('move', 'Переношу…', async () => {
     const n = await invoke('move_to_review', { library: state.lib, kind, paths });
     const gone = new Set(paths);
-    state.recs = state.recs.filter(r => !gone.has(r.path));
+    if (state.recs) state.recs = state.recs.filter(r => !gone.has(r.path));
     state.dupes.groups = [];
     state.blurry.stale = true;
     state.review.items = null;
@@ -776,7 +873,7 @@ function setLib(lib) {
 
 // ---------- routing & keys ----------
 
-const views = { import: viewImport, verify: viewVerify, dupes: viewDupes, blurry: viewBlurry, review: viewReview, stats: viewStats, settings: viewSettings };
+const views = { import: viewImport, verify: viewVerify, dupes: viewDupes, blurry: viewBlurry, review: viewReview, mindful: viewMindful, stats: viewStats, settings: viewSettings };
 function render() {
   const main = $('#main');
   main.classList.remove('fill');
@@ -795,17 +892,18 @@ let hoverPath = null;
 addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey || e.target.tagName === 'SELECT') return;
   const k = e.key.toLowerCase();
-  if ((k === 'z' || k === 'я') && hoverPath && !e.repeat && ['dupes', 'blurry', 'review'].includes(state.view)) {
+  if ((k === 'z' || k === 'я') && hoverPath && !e.repeat && ['dupes', 'blurry', 'review', 'mindful'].includes(state.view)) {
     const z = $('#zoom');
     z.querySelector('img').src = '';
     thumb(hoverPath, 2400).then(src => (z.querySelector('img').src = src));
     z.hidden = false;
     return;
   }
-  if (state.view === 'blurry' && state.blurry.items?.length) {
-    if (k === 'arrowleft') { e.preventDefault(); blurryDecide('out'); }
-    else if (k === 'arrowright') { e.preventDefault(); blurryDecide('keep'); }
-    else if (k === 'backspace' || k === 'arrowup') { e.preventDefault(); blurryBack(); }
+  const S = { blurry: state.blurry, mindful: state.mindful }[state.view];
+  if (S?.items?.length) {
+    if (k === 'arrowleft') { e.preventDefault(); swipeDecide(S, 'out'); }
+    else if (k === 'arrowright') { e.preventDefault(); swipeDecide(S, 'keep'); }
+    else if (k === 'backspace' || k === 'arrowup') { e.preventDefault(); swipeBack(S); }
   }
   if (state.view === 'dupes' && state.dupes.groups.length) {
     if (k === 'arrowright' || k === ' ') { e.preventDefault(); stepDupes(1); }

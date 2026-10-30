@@ -212,3 +212,6 @@ kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 4
 .round.ok:hover { background: #14261b; }
 .cell.back { outline-color: var(--ok); }
 .cell.back .tag { background: var(--ok); color: #000; }
+.mindful { display: flex; gap: 12px; align-items: flex-start; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+  padding: 12px 16px; margin-bottom: 14px; cursor: pointer; }
+.mindful input { margin-top: 3px; width: 16px; height: 16px; accent-color: var(--ok); }

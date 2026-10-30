@@ -47,6 +47,8 @@ pub struct Report {
     pub bytes: u64,
     pub failed: Vec<String>,
     pub folders: Vec<String>,
+    /// Imported JPEGs in shooting order, for the swipe pass.
+    pub photos: Vec<String>,
 }
 
 fn card_root(card: &Path) -> PathBuf {
@@ -168,7 +170,7 @@ pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, items: Vec<Item>, lib: &str) -
     let total: u64 = items.iter().map(|i| i.size).sum();
     let mut cache = HashCache::load(lib);
     let mut done = 0u64;
-    let mut rep = Report { copied: 0, skipped: 0, bytes: 0, failed: vec![], folders: vec![] };
+    let mut rep = Report { copied: 0, skipped: 0, bytes: 0, failed: vec![], folders: vec![], photos: vec![] };
     let mut folders = HashSet::new();
     for it in &items {
         emit(app, "import", done, total, &it.name);
@@ -194,6 +196,9 @@ pub fn run<R: tauri::Runtime>(app: &AppHandle<R>, items: Vec<Item>, lib: &str) -
                 rep.copied += 1;
                 rep.bytes += it.size;
                 folders.insert(it.dest_dir.trim_end_matches(" RAW").to_string());
+                if is_jpeg(&dst) {
+                    rep.photos.push(dst.to_string_lossy().into());
+                }
             }
             Err(e) => rep.failed.push(format!("{}: {e}", it.name)),
         }
