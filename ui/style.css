@@ -71,6 +71,7 @@ body {
 html.mac body { background: transparent; }
 
 .ic { flex: none; display: block; }
+img { -webkit-user-drag: none; user-drag: none; }
 
 /* ---------- nav ---------- */
 #nav {
@@ -338,3 +339,5 @@ kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 4
 .round.ok { color: var(--ok); border-color: var(--ok-line); }
 .round.bad:hover { background: var(--bad-bg); }
 .round.ok:hover { background: var(--ok-bg); }
+.zoom.loading .zbadge::after { content: ""; display: inline-block; width: 8px; height: 8px; margin-left: 6px; vertical-align: -1px;
+  border: 1.5px solid #fff; border-top-color: transparent; border-radius: 50%; animation: sp .8s linear infinite; }

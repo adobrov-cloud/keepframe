@@ -108,18 +108,29 @@ function lazyThumbs(root, size, scrollRoot = $('#main')) {
   root.querySelectorAll('img[data-path]').forEach(img => io.observe(img));
 }
 
-// Full-size original for zooming; resolves with its natural width.
+// Full-size original for zooming; resolves with its natural width. Loaded originals are remembered
+// per path, so re-renders (toggling keep in a burst) show them straight away.
+// If the webview cannot open the original, a 4000 px preview from the backend stands in.
+const fullCache = new Map();
 function fullRes(img) {
+  const path = img.dataset.path;
   if (img._full) return img._full;
-  img._full = new Promise(res => {
-    const src = convertFileSrc(img.dataset.path), im = new Image();
-    im.onload = () => {
-      if (img.isConnected) { img.dataset.full = '1'; img.src = src; img.dataset.nw = im.naturalWidth; }
-      res(im.naturalWidth);
-    };
-    im.onerror = () => res(0);
-    im.src = src;
-  });
+  const show = f => {
+    if (f && img.isConnected) { img.dataset.full = '1'; img.src = f.src; img.dataset.nw = f.nw; }
+    return f?.nw || 0;
+  };
+  if (!fullCache.has(path)) {
+    const load = src => new Promise((res, rej) => {
+      const im = new Image();
+      im.onload = () => res({ src, nw: im.naturalWidth });
+      im.onerror = rej;
+      im.src = src;
+    });
+    fullCache.set(path, load(convertFileSrc(path))
+      .catch(() => invoke('thumb', { path, size: 4000 }).then(convertFileSrc).then(load))
+      .catch(() => { fullCache.delete(path); return null; }));
+  }
+  img._full = fullCache.get(path).then(show);
   return img._full;
 }
 
@@ -192,7 +203,7 @@ async function task(name, text, fn) {
 // Boxes bound together (duplicates) share one zoom, so the same spot is compared in every shot.
 
 const Z = { s: 1, u: 0.5, v: 0.5 };
-function resetZoom() { Z.s = 1; }
+function resetZoom() { Z.s = 1; zoomReq = 0; }
 
 function bindZoom(boxes) {
   const imgOf = b => b.querySelector('img.zimg');
@@ -202,7 +213,10 @@ function bindZoom(boxes) {
     img.style.transformOrigin = `${Z.u * 100}% ${Z.v * 100}%`;
     img.style.transform = Z.s > 1 ? `scale(${Z.s})` : '';
     b.classList.toggle('zoomed', Z.s > 1);
-    if (Z.s > 1.3) fullRes(img).then(() => badge(b));
+    if (Z.s > 1) {
+      if (!img.dataset.full) b.classList.add('loading');
+      fullRes(img).then(() => { b.classList.remove('loading'); badge(b); });
+    }
     badge(b);
   });
   const badge = b => {
@@ -230,14 +244,21 @@ function bindZoom(boxes) {
   apply();
   return apply;
 }
-// Jump to 1:1 pixels at (u, v), or back to fit.
+// Jump to 1:1 pixels at (u, v), or back to fit. Zooms in at once and settles on the exact 1:1 scale
+// when the original has loaded; a second click before that cancels it.
+let zoomReq = 0;
 async function zoom1to1(box, apply, u, v) {
   const img = box?.querySelector('img.zimg');
   if (!img) return;
-  if (Z.s > 1) { Z.s = 1; return apply(); }
-  const nw = await fullRes(img);
+  if (Z.s > 1 || zoomReq) { zoomReq = 0; Z.s = 1; return apply(); }
+  const req = (zoomReq = performance.now());
   if (u != null) { Z.u = u; Z.v = v; }
-  Z.s = nw ? clamp(nw / img.offsetWidth, 1, 12) : 4;
+  Z.s = 2;
+  apply();
+  const nw = await fullRes(img);
+  if (zoomReq !== req) return;
+  zoomReq = 0;
+  Z.s = nw ? clamp(nw / img.offsetWidth, 2, 12) : 4;
   apply();
 }
 
@@ -812,11 +833,17 @@ function swipeBack(S) {
   render();
 }
 function dragCard(card, S) {
-  let x0 = null, dx = 0;
-  card.onpointerdown = e => { x0 = e.clientX; dx = 0; card.setPointerCapture(e.pointerId); card.style.transition = 'none'; };
+  // While zoomed the card does not swipe: the mouse only steers the zoomed view, a click zooms back out.
+  let x0 = null, dx = 0, zoomed = false;
+  card.onpointerdown = e => {
+    x0 = e.clientX; dx = 0; zoomed = Z.s > 1;
+    card.setPointerCapture(e.pointerId);
+    card.style.transition = 'none';
+  };
   card.onpointermove = e => {
     if (x0 === null) return;
     dx = e.clientX - x0;
+    if (zoomed) return;
     card.style.transform = `translateX(${dx}px) rotate(${dx / 25}deg)`;
     card.classList.toggle('go-out', dx < -40);
     card.classList.toggle('go-keep', dx > 40);
@@ -824,7 +851,7 @@ function dragCard(card, S) {
   card.onpointerup = card.onpointercancel = e => {
     if (x0 === null) return;
     x0 = null;
-    if (Math.abs(dx) > 120) return swipeDecide(S, dx < 0 ? 'out' : 'keep');
+    if (!zoomed && Math.abs(dx) > 120) return swipeDecide(S, dx < 0 ? 'out' : 'keep');
     // A click without dragging toggles 100% at the clicked spot (Z.u/Z.v follow the cursor).
     if (e.type === 'pointerup' && Math.abs(dx) < 5 && e.target.closest('.tcard') === card && swipeZoom?.card === card) {
       card.style.transform = '';
