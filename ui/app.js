@@ -66,6 +66,7 @@ const ICON = {
   card: '<path d="M7 3h8l4 4v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M10 7v3M13 7v3M16 8v2"/>',
   eject: '<path d="m12 5 7 8H5z"/><path d="M5 18h14"/>',
   check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  share: '<path d="M12 3v12"/><path d="m8 7 4-4 4 4"/><path d="M8 11H6a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-2"/>',
   folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
 };
 // Keepframe logo: the full app icon, and a bare mark (frame corners + red tick) for the sidebar.
@@ -164,6 +165,26 @@ function toast(html, ms = 6000) {
   toastTimer = setTimeout(() => (el.hidden = true), ms);
   return el;
 }
+// ---------- sharing ----------
+
+// The system Share menu exists on macOS only; elsewhere Copy and Show in folder cover it.
+function shareFiles(paths, btn) {
+  const r = btn.getBoundingClientRect();
+  invoke('share_files', { paths, anchor: { x: r.left, y: r.top, w: r.width, h: r.height } }).catch(showError);
+}
+function copyFiles(paths) {
+  invoke('copy_files', { paths }).then(() => toast(esc(t('copied', fmtN(paths.length))), 2500)).catch(() => showError(t('copy_failed')));
+}
+const revealFiles = paths => invoke('reveal_files', { paths }).catch(showError);
+// Compact = icon-only buttons, for the viewer's crowded header.
+const shareButtons = (p, n = 1, compact = false) => `${IS_MAC ? `<button class="btn" id="${p}Share" ${n ? '' : 'disabled'} title="${t('share')}">${icon('share', 15)}${compact ? '' : ' ' + t('share')}</button>` : ''}
+    <button class="btn" id="${p}Copy" ${n ? '' : 'disabled'} title="${t('copy')} (${IS_MAC ? '⌘' : 'Ctrl+'}C)">${icon('dupes', 15)}${compact ? '' : ' ' + t('copy')}</button>`;
+function bindShare(root, p, paths) {
+  const s = $(`#${p}Share`, root), c = $(`#${p}Copy`, root);
+  if (s) s.onclick = () => shareFiles(paths(), s);
+  if (c) c.onclick = () => copyFiles(paths());
+}
+
 const msg = e => String(e).replace(/@(\w+)/g, (_, k) => t(k));
 function showError(e) {
   toast(`<span style="color:var(--bad)">${t('error')}:</span> ${esc(msg(e))}`, 9000);
@@ -1543,6 +1564,7 @@ function selBar() {
     ${n ? rateControls(paths, 's') : ''}
     <button class="btn" id="sTime" ${n && !state.busy ? '' : 'disabled'}>${t('g_time')}</button>
     <button class="btn" id="sReject" ${n && !state.busy ? '' : 'disabled'}>${t('g_reject_sel')}</button>
+    ${shareButtons('s', n)}
     <button class="btn" id="sReveal" ${n ? '' : 'disabled'}>${revealLabel()}</button>
     <button class="btn" id="sAll">${t('sel_all')}</button>
     <button class="btn" id="sNone">${t('sel_none')}</button>
@@ -1553,7 +1575,8 @@ function bindSelBar(main, shown) {
   if (!bar) return;
   $('#sStar', bar).onclick = () => { const p = [...G.sel]; setStars(p, !p.every(isStar)); };
   $('#sReject', bar).onclick = () => applyMoves('rejects', [...G.sel])?.then(() => { G.sel.clear(); G.selecting = false; render(); });
-  $('#sReveal', bar).onclick = () => opener.revealItemInDir([...G.sel][0]);
+  $('#sReveal', bar).onclick = () => revealFiles([...G.sel]);
+  bindShare(bar, 's', () => [...G.sel]);
   $('#sTime', bar).onclick = () => openShift([...G.sel]);
   bindRate(bar, 's', [...G.sel]);
   $('#sAll', bar).onclick = () => { shown.forEach(x => G.sel.add(x.path)); refreshSel(main, shown); };
@@ -1570,6 +1593,11 @@ function refreshSel(main, shown) {
 // ⌘A selects everything shown, Esc clears the selection. Returns true when the key was handled.
 function galleryKey(e) {
   const G = state.gallery;
+  if ((e.metaKey || e.ctrlKey) && e.code === 'KeyC' && G.sel.size && !getSelection().toString()) {
+    e.preventDefault();
+    copyFiles([...G.sel]);
+    return true;
+  }
   if ((e.metaKey || e.ctrlKey) && e.code === 'KeyA') {
     e.preventDefault();
     const shown = galleryShown();
@@ -1624,6 +1652,7 @@ function viewViewer(main, shown) {
       ${rateControls([it.path], 'v')}
       <button class="btn ${star ? 'starred' : ''}" id="vStar" title="${star ? t('v_unstar') : t('v_star')}">${icon('star', 15)}</button>
       <button class="btn" id="vTime" ${state.busy ? 'disabled' : ''}>${t('g_time')}</button>
+      ${shareButtons('v', 1, true)}
       <button class="btn" id="vReveal">${revealLabel()}</button>
       <button class="btn" id="vOpen">${t('v_open')}</button>
       <button class="btn" id="vReject" ${state.busy ? 'disabled' : ''}>${t('v_reject')}</button></div>
@@ -1635,7 +1664,7 @@ function viewViewer(main, shown) {
     <div class="rv-foot" style="justify-content:center"><span><kbd>←</kbd> <kbd>→</kbd> ${t('h_nav')}</span>
       <span><kbd>${t('h_wheel')}</kbd> ${t('h_zoom')}</span><span><kbd>${t('h_click')}</kbd> / <kbd>${t('h_space')}</kbd> ${t('h_1to1')}</span>
       <span><kbd>1</kbd>–<kbd>5</kbd> ${t('h_rate')}</span><span><kbd>6</kbd>–<kbd>9</kbd> ${t('h_label')}</span>
-      <span><kbd>F</kbd> ${t('h_star')}</span><span><kbd>I</kbd> ${t('h_info')}</span><span><kbd>⌫</kbd> ${t('h_reject')}</span><span><kbd>Esc</kbd> ${t('h_close')}</span></div>
+      <span><kbd>F</kbd> ${t('h_star')}</span><span><kbd>${IS_MAC ? '⌘' : 'Ctrl+'}C</kbd> ${t('copy').toLowerCase()}</span><span><kbd>I</kbd> ${t('h_info')}</span><span><kbd>⌫</kbd> ${t('h_reject')}</span><span><kbd>Esc</kbd> ${t('h_close')}</span></div>
   </div>`;
   const box = $('#vbox', main);
   fillThumbs(box, 1400);
@@ -1656,7 +1685,8 @@ function viewViewer(main, shown) {
   $('#vStar', main).onclick = () => toggleStar(it.path);
   $('#vTime', main).onclick = () => openShift([it.path]);
   bindRate(main, 'v', [it.path]);
-  $('#vReveal', main).onclick = () => opener.revealItemInDir(it.path);
+  $('#vReveal', main).onclick = () => revealFiles([it.path]);
+  bindShare(main, 'v', () => [it.path]);
   $('#vOpen', main).onclick = () => opener.openPath(it.path);
   $('#vReject', main).onclick = () => rejectFromViewer(it);
 }
@@ -2006,6 +2036,11 @@ addEventListener('keydown', e => {
   if (['SELECT', 'INPUT'].includes(e.target.tagName)) return;
   if ($('.modal-bg')) { if (e.key === 'Escape') $('.modal-bg').remove(); return; }
   if (state.view === 'gallery' && state.gallery.open == null && galleryKey(e)) return;
+  if ((e.metaKey || e.ctrlKey) && e.code === 'KeyC' && state.view === 'gallery' && state.gallery.open != null && !getSelection().toString()) {
+    const it = galleryShown()[state.gallery.open];
+    if (it) { e.preventDefault(); copyFiles([it.path]); }
+    return;
+  }
   if (e.metaKey || e.ctrlKey) return;
   // Letter shortcuts go by physical key, so they work in any keyboard layout.
   const code = { KeyZ: 'z', KeyF: 'f', KeyI: 'i', KeyA: 'a' }[e.code];

@@ -113,6 +113,7 @@ STRINGS.es = {
   h_nav: 'pasar', h_star: 'favorita', h_reject: 'descartar', h_close: 'cerrar',
   g_select: 'Seleccionar', g_selected: n => `${n} seleccionadas`, g_star_sel: 'Añadir a favoritas', g_unstar_sel: 'Quitar de favoritas',
   g_reject_sel: 'Descartar', h_range: 'rango', h_one: 'una a una', h_all: 'seleccionar todo',
+  share: 'Compartir…', copy: 'Copiar', copied: n => `Copiado: ${n} — pégalo en un chat o carpeta`, copy_failed: 'No se pudo copiar al portapapeles',
   stats_title: 'Estadísticas', stats_sub: 'Resumen de los ajustes de disparo y de los problemas más comunes.',
   k_jpg: 'fotos JPG', k_iso: 'con ISO 3200+', k_vert: 'verticales', k_ends: 'en los extremos del zoom',
   c_iso: 'ISO', c_shutter: 'Velocidad de obturación', c_aperture: 'Apertura', c_focal: 'Distancia focal',

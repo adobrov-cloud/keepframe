@@ -113,6 +113,7 @@ STRINGS.tr = {
   h_nav: 'gez', h_star: 'favori', h_reject: 'ele', h_close: 'kapat',
   g_select: 'Seç', g_selected: n => `Seçili: ${n}`, g_star_sel: 'Favorilere ekle', g_unstar_sel: 'Favorilerden çıkar',
   g_reject_sel: 'Ele', h_range: 'aralık', h_one: 'tek tek', h_all: 'tümünü seç',
+  share: 'Paylaş…', copy: 'Kopyala', copied: n => `${n} kopyalandı — sohbete veya klasöre yapıştırın`, copy_failed: 'Panoya kopyalanamadı',
   stats_title: 'İstatistik', stats_sub: 'Çekim ayarlarının ve sık görülen sorunların özeti.',
   k_jpg: 'JPG kare', k_iso: 'ISO 3200+ ile', k_vert: 'dikey', k_ends: 'zoomun uç odak uzaklıklarında',
   c_iso: 'ISO', c_shutter: 'Enstantane', c_aperture: 'Diyafram', c_focal: 'Odak uzaklığı',

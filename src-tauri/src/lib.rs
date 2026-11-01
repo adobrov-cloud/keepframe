@@ -3,6 +3,7 @@ mod import;
 mod meta;
 mod preview;
 mod review;
+mod share;
 mod util;
 mod verify;
 
@@ -297,7 +298,10 @@ pub fn run() {
             get_meta,
             set_meta,
             shift_time,
-            exact_copies
+            exact_copies,
+            share::share_files,
+            share::copy_files,
+            share::reveal_files
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

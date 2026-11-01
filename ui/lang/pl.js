@@ -117,6 +117,7 @@ STRINGS.pl = {
   h_nav: 'przeglądaj', h_star: 'ulubione', h_reject: 'odrzuć', h_close: 'zamknij',
   g_select: 'Zaznacz', g_selected: n => `Zaznaczono: ${n}`, g_star_sel: 'Do ulubionych', g_unstar_sel: 'Usuń z ulubionych',
   g_reject_sel: 'Odrzuć', h_range: 'zakres', h_one: 'pojedynczo', h_all: 'zaznacz wszystko',
+  share: 'Udostępnij…', copy: 'Kopiuj', copied: n => `Skopiowano: ${n} — wklej do czatu lub folderu`, copy_failed: 'Nie udało się skopiować do schowka',
   stats_title: 'Statystyki', stats_sub: 'Podsumowanie ustawień zdjęć i typowych problemów.',
   k_jpg: 'zdjęć JPG', k_iso: 'przy ISO 3200+', k_vert: 'pionowych', k_ends: 'na skrajnych ogniskowych zoomu',
   c_iso: 'ISO', c_shutter: 'Czas naświetlania', c_aperture: 'Przysłona', c_focal: 'Ogniskowa',

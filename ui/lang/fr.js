@@ -113,6 +113,7 @@ STRINGS.fr = {
   h_nav: 'parcourir', h_star: 'favori', h_reject: 'rejeter', h_close: 'fermer',
   g_select: 'Sélectionner', g_selected: n => `Sélection : ${n}`, g_star_sel: 'Ajouter aux favoris', g_unstar_sel: 'Retirer des favoris',
   g_reject_sel: 'Rejeter', h_range: 'plage', h_one: 'une par une', h_all: 'tout sélectionner',
+  share: 'Partager…', copy: 'Copier', copied: n => `${n} copié(s) — collez dans une discussion ou un dossier`, copy_failed: 'Impossible de copier dans le presse-papiers',
   stats_title: 'Statistiques', stats_sub: 'Résumé des réglages de prise de vue et des problèmes courants.',
   k_jpg: 'photos JPG', k_iso: 'à ISO 3200+', k_vert: 'en portrait', k_ends: 'aux extrémités du zoom',
   c_iso: 'ISO', c_shutter: 'Vitesse d’obturation', c_aperture: 'Ouverture', c_focal: 'Focale',

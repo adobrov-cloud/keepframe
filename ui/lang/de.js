@@ -113,6 +113,7 @@ STRINGS.de = {
   h_nav: 'blättern', h_star: 'Favorit', h_reject: 'in den Ausschuss', h_close: 'schließen',
   g_select: 'Auswählen', g_selected: n => `${n} ausgewählt`, g_star_sel: 'Zu Favoriten', g_unstar_sel: 'Aus Favoriten entfernen',
   g_reject_sel: 'In den Ausschuss', h_range: 'Bereich', h_one: 'einzeln', h_all: 'alle auswählen',
+  share: 'Teilen …', copy: 'Kopieren', copied: n => `${n} kopiert – in Chat oder Ordner einfügen`, copy_failed: 'Kopieren in die Zwischenablage fehlgeschlagen',
   stats_title: 'Statistik', stats_sub: 'Zusammenfassung der Aufnahmeeinstellungen und typischer Probleme.',
   k_jpg: 'JPG-Aufnahmen', k_iso: 'bei ISO 3200+', k_vert: 'im Hochformat', k_ends: 'an den Zoom-Enden',
   c_iso: 'ISO', c_shutter: 'Verschlusszeit', c_aperture: 'Blende', c_focal: 'Brennweite',

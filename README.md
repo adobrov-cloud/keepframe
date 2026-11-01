@@ -36,7 +36,7 @@ Nothing is ever deleted. Rejected shots go to `_review (…)` folders next to yo
 
 **🌙 Low light and slow shutter.** *Blurry* finds frames noticeably softer than the rest of the same day and shows the sharpest 100 % crop of each, so motion blur and missed focus are obvious at a glance. *Statistics* then tells you why: ISO, shutter and aperture habits, and concrete settings to change.
 
-**🗂 Finding the keepers.** The *Gallery* shows the whole library by day, with videos. Star favourites, multi-select with Shift/⌘, reject in bulk, open in Preview or reveal in Finder.
+**🗂 Finding the keepers.** The *Gallery* shows the whole library by day, with videos. Star favourites, multi-select with Shift/⌘, reject in bulk, share via AirDrop, Messages or Mail, copy with ⌘C straight into a chat, open in Preview or reveal in Finder.
 
 **💾 Before formatting the card.** *Verify card* hashes every file on the card — including videos the camera keeps outside `DCIM` and formats the app doesn't know — and lists anything missing. A checksum file is saved with the library.
 

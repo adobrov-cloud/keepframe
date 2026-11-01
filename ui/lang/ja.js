@@ -112,6 +112,7 @@ STRINGS.ja = {
   h_nav: '移動', h_star: 'お気に入り', h_reject: '不採用', h_close: '閉じる',
   g_select: '選択', g_selected: n => `${n}件を選択中`, g_star_sel: 'お気に入りに追加', g_unstar_sel: 'お気に入りから削除',
   g_reject_sel: '不採用', h_range: '範囲', h_one: '1つずつ', h_all: 'すべて選択',
+  share: '共有…', copy: 'コピー', copied: n => `${n} 件をコピーしました — チャットやフォルダにペースト`, copy_failed: 'クリップボードにコピーできませんでした',
   stats_title: '統計', stats_sub: '撮影設定とよくある問題のまとめです。',
   k_jpg: 'JPG写真', k_iso: 'ISO 3200以上', k_vert: '縦位置', k_ends: 'ズームの両端',
   c_iso: 'ISO', c_shutter: 'シャッタースピード', c_aperture: '絞り', c_focal: '焦点距離',

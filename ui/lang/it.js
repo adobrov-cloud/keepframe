@@ -113,6 +113,7 @@ STRINGS.it = {
   h_nav: 'scorri', h_star: 'preferita', h_reject: 'scarta', h_close: 'chiudi',
   g_select: 'Seleziona', g_selected: n => `${n} selezionate`, g_star_sel: 'Aggiungi alle preferite', g_unstar_sel: 'Rimuovi dalle preferite',
   g_reject_sel: 'Scarta', h_range: 'intervallo', h_one: 'una alla volta', h_all: 'seleziona tutto',
+  share: 'Condividi…', copy: 'Copia', copied: n => `Copiati: ${n} — incolla in una chat o cartella`, copy_failed: 'Impossibile copiare negli appunti',
   stats_title: 'Statistiche', stats_sub: 'Un riepilogo delle impostazioni di scatto e dei problemi più comuni.',
   k_jpg: 'foto JPG', k_iso: 'a ISO 3200+', k_vert: 'verticali', k_ends: 'agli estremi dello zoom',
   c_iso: 'ISO', c_shutter: 'Tempo di scatto', c_aperture: 'Diaframma', c_focal: 'Lunghezza focale',

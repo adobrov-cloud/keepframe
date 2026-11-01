@@ -112,6 +112,7 @@ STRINGS.zh = {
   h_nav: '浏览', h_star: '收藏', h_reject: '淘汰', h_close: '关闭',
   g_select: '选择', g_selected: n => `已选择 ${n} 项`, g_star_sel: '添加到收藏', g_unstar_sel: '从收藏中移除',
   g_reject_sel: '淘汰', h_range: '范围', h_one: '逐个', h_all: '全选',
+  share: '共享…', copy: '拷贝', copied: n => `已拷贝 ${n} 个 — 可粘贴到聊天或文件夹`, copy_failed: '无法拷贝到剪贴板',
   stats_title: '统计', stats_sub: '拍摄设置和常见问题的汇总。',
   k_jpg: '张 JPG 照片', k_iso: '张 ISO 3200 以上', k_vert: '张竖构图', k_ends: '张处于变焦两端',
   c_iso: 'ISO', c_shutter: '快门速度', c_aperture: '光圈', c_focal: '焦距',

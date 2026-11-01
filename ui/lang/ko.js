@@ -112,6 +112,7 @@ STRINGS.ko = {
   h_nav: '넘기기', h_star: '즐겨찾기', h_reject: '제외', h_close: '닫기',
   g_select: '선택', g_selected: n => `${n}개 선택됨`, g_star_sel: '즐겨찾기에 추가', g_unstar_sel: '즐겨찾기에서 제거',
   g_reject_sel: '제외', h_range: '범위', h_one: '하나씩', h_all: '모두 선택',
+  share: '공유…', copy: '복사', copied: n => `${n}개 복사됨 — 채팅이나 폴더에 붙여넣기`, copy_failed: '클립보드에 복사할 수 없음',
   stats_title: '통계', stats_sub: '촬영 설정과 흔한 문제를 요약해서 보여줘요.',
   k_jpg: 'JPG 사진', k_iso: 'ISO 3200 이상', k_vert: '세로 사진', k_ends: '줌 양 끝 초점 거리',
   c_iso: 'ISO', c_shutter: '셔터 속도', c_aperture: '조리개', c_focal: '초점 거리',
